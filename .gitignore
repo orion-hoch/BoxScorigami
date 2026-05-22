@@ -1,0 +1,25 @@
+# Local data — too big for git, regenerate with scorigami/collect.py
+scorigami/scorigami.sqlite
+scorigami/scorigami.sqlite-journal
+scorigami/scorigami.sqlite-wal
+scorigami/scorigami.sqlite-shm
+
+# Vendored nba_api repo — install via pip instead if you need it locally
+nba_api/
+
+# Old single-combo export artifact, superseded by scorigami/public/tally/
+scorigami/pra_cube.json
+scorigami/pra_tally.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Vercel local
+.vercel/
