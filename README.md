@@ -1,4 +1,4 @@
-# NBA Scorigami Cube
+# BoxScorigami
 
 Interactive 3D visualization of every NBA player-game stat-line in history.
 Pick any 3 of 13 stats for the X/Y/Z axes, rotate, peel layers, click voxels
