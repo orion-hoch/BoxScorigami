@@ -151,9 +151,13 @@ function bucketColor(n) {
   return COLOR_MANY;
 }
 
-function patchMaterial(material, extraMul = 1.0) {
-  material.transparent = true;
-  material.depthWrite = false;
+function patchMaterial(material, extraMul = 1.0, alwaysTransparent = false) {
+  // Default to opaque so voxels properly occlude each other from every
+  // angle. The opacity slider flips the occupied material into transparent
+  // mode only when the user actually pulls it below 1.0. Greys keep
+  // alwaysTransparent=true because the 0.18 multiplier requires blending.
+  material.transparent = alwaysTransparent;
+  material.depthWrite = !alwaysTransparent;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uGlobalOpacity = SHARED.uGlobalOpacity;
     shader.fragmentShader =
@@ -301,7 +305,7 @@ function buildCube(data) {
   // --- Occupied voxels ---
   const geomOcc = new THREE.BoxGeometry(0.9, 0.9, 0.9);
   const matOcc = new THREE.MeshLambertMaterial();
-  patchMaterial(matOcc, 1.0);
+  patchMaterial(matOcc, 1.0, /* alwaysTransparent */ false);
 
   const occMesh = new THREE.InstancedMesh(geomOcc, matOcc, Math.max(1, cells.length));
   occMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -372,6 +376,7 @@ function buildCube(data) {
   if (showZeros) buildZeroMesh();
 
   applyPeel();
+  applyOpacity(parseFloat(globalAlphaEl.value));
 
   statusEl.textContent =
     `${cells.length.toLocaleString()} occupied cells · bbox ${MAX_X}×${MAX_Y}×${MAX_Z}`;
@@ -400,7 +405,7 @@ function buildZeroMesh() {
 
   const geomZ = new THREE.BoxGeometry(0.9, 0.9, 0.9);
   const matZ = new THREE.MeshLambertMaterial({ color: COLOR_ZERO });
-  patchMaterial(matZ, 0.18);
+  patchMaterial(matZ, 0.18, /* alwaysTransparent */ true);
 
   const zeroMesh = new THREE.InstancedMesh(geomZ, matZ, positions.length);
   const dummy = new THREE.Object3D();
@@ -495,10 +500,23 @@ document.getElementById('showZeros').addEventListener('change', (e) => {
 });
 const globalAlphaEl = document.getElementById('globalAlpha');
 const globalAlphaNumEl = document.getElementById('globalAlphaNum');
-globalAlphaEl.addEventListener('input', () => {
-  const v = parseFloat(globalAlphaEl.value);
+function applyOpacity(v) {
   SHARED.uGlobalOpacity.value = v;
   globalAlphaNumEl.textContent = v.toFixed(2);
+  // Flip occupied voxels in/out of the transparent render path so they
+  // properly occlude each other at full opacity.
+  if (state.occMesh) {
+    const wantsTransparent = v < 0.999;
+    const mat = state.occMesh.material;
+    if (mat.transparent !== wantsTransparent) {
+      mat.transparent = wantsTransparent;
+      mat.depthWrite = !wantsTransparent;
+      mat.needsUpdate = true;
+    }
+  }
+}
+globalAlphaEl.addEventListener('input', () => {
+  applyOpacity(parseFloat(globalAlphaEl.value));
 });
 const peelEl = document.getElementById('peel');
 const peelNumEl = document.getElementById('peelNum');
