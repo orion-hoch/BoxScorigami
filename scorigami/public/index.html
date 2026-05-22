@@ -80,10 +80,12 @@
     <span><span class="sw" style="background:#4b4f57"></span>0</span>
     <span><span class="sw" style="background:#e53935"></span>1</span>
     <span><span class="sw" style="background:#43a047"></span>2+</span>
+    <span><span class="sw" style="background:#4dd0e1"></span>enclosed</span>
   </div>
 
   <div id="controls">
     <label><input type="checkbox" id="showZeros" /> show zero cells</label>
+    <label><input type="checkbox" id="showEnclosed" checked /> show enclosed empties (6-neighbor)</label>
     <div class="sliderRow">
       <span>opacity</span>
       <input type="range" id="globalAlpha" min="0" max="1" step="0.01" value="1.0" />
@@ -126,10 +128,17 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const COLOR_ZERO  = new THREE.Color(0x4b4f57);
-const COLOR_ONE   = new THREE.Color(0xe53935);
-const COLOR_MANY  = new THREE.Color(0x43a047);
-const COLOR_HOVER = new THREE.Color(0xfff3a0);
+const COLOR_ZERO     = new THREE.Color(0x4b4f57);
+const COLOR_ONE      = new THREE.Color(0xe53935);
+const COLOR_MANY     = new THREE.Color(0x43a047);
+const COLOR_ENCLOSED = new THREE.Color(0x4dd0e1);
+const COLOR_HOVER    = new THREE.Color(0xfff3a0);
+
+const NEIGHBOR_OFFSETS_6 = [
+  [ 1, 0, 0], [-1, 0, 0],
+  [ 0, 1, 0], [ 0,-1, 0],
+  [ 0, 0, 1], [ 0, 0,-1],
+];
 
 const statusEl    = document.getElementById('status');
 const detailEl    = document.getElementById('detail');
@@ -229,8 +238,10 @@ scene.add(cubeGroup);
 const state = {
   occMesh: null,
   zeroMesh: null,
+  enclosedMesh: null,
   instanceIndex: [],
   zeroIndex: [],
+  enclosedIndex: [],
   occupied: null,
   MAX_X: 0, MAX_Y: 0, MAX_Z: 0,
   axes: null,
@@ -258,8 +269,10 @@ function clearCube() {
   }
   state.occMesh = null;
   state.zeroMesh = null;
+  state.enclosedMesh = null;
   state.instanceIndex = [];
   state.zeroIndex = [];
+  state.enclosedIndex = [];
   state.occupied = null;
   hoverColorRestore = null;
 }
@@ -372,6 +385,12 @@ function buildCube(data) {
   camera.lookAt(cx, cy, cz);
   controls.update();
 
+  // --- Enclosed empties (6-neighbor) — built eagerly, it's a small set ---
+  buildEnclosedMesh();
+  if (state.enclosedMesh) {
+    state.enclosedMesh.visible = document.getElementById('showEnclosed').checked;
+  }
+
   // --- Lazy zero mesh: rebuild if currently toggled on ---
   const showZeros = document.getElementById('showZeros').checked;
   if (showZeros) buildZeroMesh();
@@ -381,6 +400,54 @@ function buildCube(data) {
 
   statusEl.textContent =
     `${cells.length.toLocaleString()} occupied cells · bbox ${MAX_X}×${MAX_Y}×${MAX_Z}`;
+}
+
+function buildEnclosedMesh() {
+  if (state.enclosedMesh || !state.occupied) return;
+  const { MAX_X, MAX_Y, MAX_Z, occupied } = state;
+
+  const positions = [];
+  for (let p = 0; p <= MAX_X; p++) {
+    for (let r = 0; r <= MAX_Y; r++) {
+      for (let a = 0; a <= MAX_Z; a++) {
+        if (occupied.has(`${p},${r},${a}`)) continue;
+        let allOccupied = true;
+        for (const [dp, dr, da] of NEIGHBOR_OFFSETS_6) {
+          if (!occupied.has(`${p + dp},${r + dr},${a + da}`)) {
+            allOccupied = false;
+            break;
+          }
+        }
+        if (allOccupied) positions.push([p, r, a]);
+      }
+    }
+  }
+  if (positions.length === 0) return;
+
+  // Match peel ordering used by occ/zero meshes.
+  positions.sort((q1, q2) =>
+    (q1[0]*q1[0] + q1[1]*q1[1] + q1[2]*q1[2]) -
+    (q2[0]*q2[0] + q2[1]*q2[1] + q2[2]*q2[2])
+  );
+
+  const geom = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+  const mat = new THREE.MeshLambertMaterial({ color: COLOR_ENCLOSED });
+  patchMaterial(mat, 1.0, /* alwaysTransparent */ false);
+
+  const mesh = new THREE.InstancedMesh(geom, mat, positions.length);
+  const dummy = new THREE.Object3D();
+  const idx = [];
+  for (let i = 0; i < positions.length; i++) {
+    const [p, r, a] = positions[i];
+    dummy.position.set(p, r, a);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    idx.push({ p, r, a });
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  cubeGroup.add(mesh);
+  state.enclosedMesh = mesh;
+  state.enclosedIndex = idx;
 }
 
 function buildZeroMesh() {
@@ -438,6 +505,7 @@ function pick(event) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   const targets = [state.occMesh];
+  if (state.enclosedMesh && state.enclosedMesh.visible) targets.push(state.enclosedMesh);
   if (state.zeroMesh && state.zeroMesh.visible) targets.push(state.zeroMesh);
   const hits = raycaster.intersectObjects(targets, false);
   return hits[0] || null;
@@ -466,6 +534,21 @@ function showDetailForZero(p, r, a) {
     <div class="empty">no player has ever recorded this exact stat line</div>
   `;
 }
+function showDetailForEnclosed(p, r, a) {
+  detailEl.style.display = 'block';
+  const occ = state.occupied;
+  const neighborRows = NEIGHBOR_OFFSETS_6.map(([dp, dr, da]) => {
+    const c = occ.get(`${p + dp},${r + dr},${a + da}`);
+    const axisLabel = dp ? state.axes.x.label : dr ? state.axes.y.label : state.axes.z.label;
+    const sign = (dp + dr + da) > 0 ? '+1' : '-1';
+    return `<div class="row"><span class="k">${axisLabel} ${sign}</span><span class="v">n=${c ? c.n : '?'}</span></div>`;
+  }).join('');
+  detailBodyEl.innerHTML = `
+    <div class="pra">${fmtAxis({ p, r, a })}</div>
+    <div class="empty">never recorded — but surrounded on all 6 sides</div>
+    ${neighborRows}
+  `;
+}
 
 renderer.domElement.addEventListener('mousemove', (ev) => {
   const hit = pick(ev);
@@ -484,6 +567,10 @@ renderer.domElement.addEventListener('mouseup', (ev) => {
   const hit = pick(ev);
   if (!hit) return;
   if (hit.object === state.occMesh) showDetailForCell(state.instanceIndex[hit.instanceId]);
+  else if (hit.object === state.enclosedMesh) {
+    const e = state.enclosedIndex[hit.instanceId];
+    showDetailForEnclosed(e.p, e.r, e.a);
+  }
   else if (hit.object === state.zeroMesh) {
     const z = state.zeroIndex[hit.instanceId];
     showDetailForZero(z.p, z.r, z.a);
@@ -491,6 +578,9 @@ renderer.domElement.addEventListener('mouseup', (ev) => {
 });
 
 // ---- UI bindings ----
+document.getElementById('showEnclosed').addEventListener('change', (e) => {
+  if (state.enclosedMesh) state.enclosedMesh.visible = e.target.checked;
+});
 document.getElementById('showZeros').addEventListener('change', (e) => {
   if (e.target.checked) {
     buildZeroMesh();
@@ -532,6 +622,10 @@ function applyPeel() {
   if (state.zeroMesh) {
     const total = state.zeroIndex.length;
     state.zeroMesh.count = Math.max(0, Math.min(total, Math.round(total * keepFrac)));
+  }
+  if (state.enclosedMesh) {
+    const total = state.enclosedIndex.length;
+    state.enclosedMesh.count = Math.max(0, Math.min(total, Math.round(total * keepFrac)));
   }
 }
 
