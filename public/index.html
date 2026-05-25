@@ -10,7 +10,7 @@
   #canvas { display: block; width: 100%; height: 100%; }
   .panel {
     position: absolute; padding: 14px 16px;
-    background: rgba(20, 22, 26, 0.85); border: 1px solid #2a2f36; border-radius: 8px;
+    background: rgba(20, 22, 26, 0.85); border: 2px solid #3a4150; border-radius: 8px;
     backdrop-filter: blur(6px); font-size: 13px; line-height: 1.45;
   }
   #info { top: 12px; left: 12px; min-width: 280px; max-width: 340px; }
@@ -34,21 +34,36 @@
   #controls .sliderRow input[type="range"] { width: 100%; }
   #controls .sliderRow .num { font-variant-numeric: tabular-nums; color: #8b94a0; font-size: 11px; text-align: right; }
   #controls select {
-    background: #181b21; color: #e6e8eb; border: 1px solid #2a2f36; border-radius: 4px;
+    background: #181b21; color: #e6e8eb; border: 2px solid #3a4150; border-radius: 4px;
     padding: 3px 6px; font-size: 12px; width: 100%;
   }
   #axisGrid {
     display: grid; grid-template-columns: 24px 1fr; gap: 6px 8px; align-items: center;
-    margin-top: 8px; padding: 8px 10px; background: rgba(0,0,0,0.18); border-radius: 6px;
+    margin-top: 8px; padding: 8px 10px;
+    background: rgba(0,0,0,0.18); border: 2px solid #3a4150; border-radius: 6px;
   }
   #axisGrid .lab { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .subpanel {
+    margin-top: 12px; padding: 10px 12px;
+    background: rgba(0,0,0,0.18); border: 2px solid #3a4150; border-radius: 6px;
+  }
+  .subpanel h2 { margin: 0 0 8px 0; font-size: 12px; color: #e6e8eb;
+                 text-transform: uppercase; letter-spacing: .08em; }
+  .subpanel input[type="text"],
+  .subpanel input[type="number"] {
+    background: #181b21; color: #e6e8eb; border: 2px solid #3a4150; border-radius: 4px;
+    padding: 4px 6px; font-size: 12px; width: 100%; box-sizing: border-box;
+    font-family: inherit; font-variant-numeric: tabular-nums;
+  }
+  .subpanel input:focus { outline: none; border-color: #f7c948; }
 
   #detail .pra { font-size: 16px; font-weight: 600; color: #f7c948; margin-bottom: 6px; }
   #detail .empty { color: #8b94a0; font-style: italic; }
 
   #lbList { overflow-y: auto; flex: 1 1 auto; margin-top: 4px; padding-right: 4px; }
   #lbList::-webkit-scrollbar { width: 6px; }
-  #lbList::-webkit-scrollbar-thumb { background: #2a2f36; border-radius: 3px; }
+  #lbList::-webkit-scrollbar-thumb { background: #3a4150; border-radius: 3px; }
   .lbRow {
     display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; padding: 4px 2px;
     border-bottom: 1px solid rgba(255,255,255,.04); align-items: baseline;
@@ -59,15 +74,48 @@
 
   #status {
     position: absolute; bottom: 12px; left: 12px; padding: 8px 12px;
-    background: rgba(20,22,26,.8); border: 1px solid #2a2f36; border-radius: 6px; font-size: 12px;
+    background: rgba(20,22,26,.8); border: 2px solid #3a4150; border-radius: 6px; font-size: 12px;
   }
+
+  #tabs {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 4px;
+    background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
+    padding: 4px; backdrop-filter: blur(6px); z-index: 10;
+  }
+  #tabs button {
+    background: transparent; color: #8b94a0; border: 0;
+    padding: 6px 22px; font-size: 13px; font-weight: 600;
+    border-radius: 5px; cursor: pointer; letter-spacing: .03em;
+    font-family: inherit;
+  }
+  #tabs button:hover { color: #e6e8eb; }
+  #tabs button.active { background: #2a2f36; color: #f7c948; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #2a2f36; color: #e6e8eb;
+    border: 1px solid #3a4150; border-radius: 10px;
+    padding: 2px 8px;
+    font-size: 11px; line-height: 1.4;
+  }
+  .chip button {
+    background: transparent; border: 0; color: #8b94a0;
+    cursor: pointer; padding: 0 2px; font-size: 12px; line-height: 1;
+  }
+  .chip button:hover { color: #ff6b6b; }
 </style>
 </head>
 <body>
 <canvas id="canvas"></canvas>
 
+<div id="tabs">
+  <button data-sport="nba">NBA</button>
+  <button data-sport="nfl">NFL</button>
+</div>
+
 <div id="info" class="panel">
-  <h1>BoxScorigami Cube</h1>
+  <h1 id="cubeTitle">BoxScorigami</h1>
   <div class="hint" id="axisHint">choose any three stats for the axes</div>
 
   <div id="axisGrid">
@@ -77,15 +125,14 @@
   </div>
 
   <div id="legend">
-    <span><span class="sw" style="background:#4b4f57"></span>0</span>
     <span><span class="sw" style="background:#e53935"></span>1</span>
     <span><span class="sw" style="background:#43a047"></span>2+</span>
     <span><span class="sw" style="background:#4dd0e1"></span>enclosed</span>
   </div>
 
   <div id="controls">
-    <label><input type="checkbox" id="showZeros" /> show zero cells</label>
     <label><input type="checkbox" id="showEnclosed" checked /> show enclosed empties (6-neighbor)</label>
+    <label><input type="checkbox" id="hideScorigamis" /> hide scorigamis (n=1 red cells)</label>
     <div class="sliderRow">
       <span>opacity</span>
       <input type="range" id="globalAlpha" min="0" max="1" step="0.01" value="1.0" />
@@ -97,6 +144,23 @@
       <span class="num" id="peelNum">0.00</span>
     </div>
     <label><input type="checkbox" id="showAxes" checked /> show axes</label>
+  </div>
+
+  <div class="subpanel" id="yearFilterBox">
+    <h2>Year Filter</h2>
+    <div style="display:grid;grid-template-columns:1fr 12px 1fr;gap:6px;align-items:center">
+      <input type="number" id="yearFrom" placeholder="from" />
+      <span style="text-align:center;color:#8b94a0">–</span>
+      <input type="number" id="yearTo" placeholder="to" />
+    </div>
+    <div class="hint" id="yearHint" style="margin-top:6px">filter by most-recent game year</div>
+  </div>
+
+  <div class="subpanel" id="playerFilterBox">
+    <h2>Player Filter</h2>
+    <input type="text" id="playerFilterInput"
+           placeholder="hide a player's scorigamis (type + Enter)" />
+    <div id="playerFilterChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px"></div>
   </div>
 
   <div class="hint" style="margin-top:10px">drag = orbit · scroll = zoom · right-drag = pan · click a cell</div>
@@ -128,7 +192,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const COLOR_ZERO     = new THREE.Color(0x4b4f57);
 const COLOR_ONE      = new THREE.Color(0xe53935);
 const COLOR_MANY     = new THREE.Color(0x43a047);
 const COLOR_ENCLOSED = new THREE.Color(0x4dd0e1);
@@ -156,7 +219,6 @@ const SHARED = {
 };
 
 function bucketColor(n) {
-  if (n === 0) return COLOR_ZERO;
   if (n === 1) return COLOR_ONE;
   return COLOR_MANY;
 }
@@ -237,10 +299,8 @@ scene.add(cubeGroup);
 // State for the currently-active cube.
 const state = {
   occMesh: null,
-  zeroMesh: null,
   enclosedMesh: null,
   instanceIndex: [],
-  zeroIndex: [],
   enclosedIndex: [],
   occupied: null,
   MAX_X: 0, MAX_Y: 0, MAX_Z: 0,
@@ -268,10 +328,8 @@ function clearCube() {
     if (c.material && c.material.map) c.material.map.dispose();
   }
   state.occMesh = null;
-  state.zeroMesh = null;
   state.enclosedMesh = null;
   state.instanceIndex = [];
-  state.zeroIndex = [];
   state.enclosedIndex = [];
   state.occupied = null;
   hoverColorRestore = null;
@@ -340,6 +398,10 @@ function buildCube(data) {
   state.occMesh = occMesh;
   state.instanceIndex = instanceIndex;
 
+  // Refresh year-range bounds from the new dataset before applying filters.
+  updateYearBounds();
+  applyVisibilityFilters();
+
   // --- Axes + labels + bbox ---
   const axesGroup = new THREE.Group();
   axesGroup.name = 'axes';
@@ -390,10 +452,6 @@ function buildCube(data) {
   if (state.enclosedMesh) {
     state.enclosedMesh.visible = document.getElementById('showEnclosed').checked;
   }
-
-  // --- Lazy zero mesh: rebuild if currently toggled on ---
-  const showZeros = document.getElementById('showZeros').checked;
-  if (showZeros) buildZeroMesh();
 
   applyPeel();
   applyOpacity(parseFloat(globalAlphaEl.value));
@@ -450,50 +508,6 @@ function buildEnclosedMesh() {
   state.enclosedIndex = idx;
 }
 
-function buildZeroMesh() {
-  if (state.zeroMesh || !state.occupied) return;
-  const { MAX_X, MAX_Y, MAX_Z, occupied } = state;
-  const total = (MAX_X + 1) * (MAX_Y + 1) * (MAX_Z + 1) - state.instanceIndex.length;
-  if (total <= 0) return;
-
-  // Collect, then sort by distance ascending — keeps peel consistent with occ mesh.
-  const positions = [];
-  for (let p = 0; p <= MAX_X; p++) {
-    for (let r = 0; r <= MAX_Y; r++) {
-      for (let a = 0; a <= MAX_Z; a++) {
-        if (occupied.has(`${p},${r},${a}`)) continue;
-        positions.push([p, r, a]);
-      }
-    }
-  }
-  positions.sort((q1, q2) =>
-    (q1[0]*q1[0] + q1[1]*q1[1] + q1[2]*q1[2]) -
-    (q2[0]*q2[0] + q2[1]*q2[1] + q2[2]*q2[2])
-  );
-
-  const geomZ = new THREE.BoxGeometry(0.9, 0.9, 0.9);
-  const matZ = new THREE.MeshLambertMaterial({ color: COLOR_ZERO });
-  patchMaterial(matZ, 0.18, /* alwaysTransparent */ true);
-
-  const zeroMesh = new THREE.InstancedMesh(geomZ, matZ, positions.length);
-  const dummy = new THREE.Object3D();
-  const zeroIndex = [];
-  for (let i = 0; i < positions.length; i++) {
-    const [p, r, a] = positions[i];
-    dummy.position.set(p, r, a);
-    dummy.updateMatrix();
-    zeroMesh.setMatrixAt(i, dummy.matrix);
-    zeroIndex.push({ p, r, a });
-  }
-  zeroMesh.count = positions.length;
-  zeroMesh.instanceMatrix.needsUpdate = true;
-  zeroMesh.renderOrder = -1;
-  cubeGroup.add(zeroMesh);
-  state.zeroMesh = zeroMesh;
-  state.zeroIndex = zeroIndex;
-  applyPeel();
-}
-
 // ---- Picking ----
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -506,7 +520,6 @@ function pick(event) {
   raycaster.setFromCamera(pointer, camera);
   const targets = [state.occMesh];
   if (state.enclosedMesh && state.enclosedMesh.visible) targets.push(state.enclosedMesh);
-  if (state.zeroMesh && state.zeroMesh.visible) targets.push(state.zeroMesh);
   const hits = raycaster.intersectObjects(targets, false);
   return hits[0] || null;
 }
@@ -518,20 +531,18 @@ function fmtAxis(c) {
 
 function showDetailForCell(c) {
   detailEl.style.display = 'block';
+  const url = boxscoreUrl(c);
+  const linkLabel = SPORT === 'nfl' ? 'pro-football-reference' : 'basketball-reference';
+  const linkHtml = url
+    ? `<a href="${url}" target="_blank" rel="noopener" style="color:#f7c948">${linkLabel} ↗</a>`
+    : (c.g || '—');
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis(c)}</div>
     <div class="row"><span class="k">tally</span><span class="v">${c.n.toLocaleString()}</span></div>
     <div class="row"><span class="k">most recent</span><span class="v">${c.d || '—'}</span></div>
     <div class="row"><span class="k">player</span><span class="v">${c.pl || 'unknown'} ${c.t ? '(' + c.t + ')' : ''}</span></div>
     <div class="row"><span class="k">matchup</span><span class="v">${c.m || '—'}</span></div>
-    <div class="row"><span class="k">game id</span><span class="v">${c.g || '—'}</span></div>
-  `;
-}
-function showDetailForZero(p, r, a) {
-  detailEl.style.display = 'block';
-  detailBodyEl.innerHTML = `
-    <div class="pra">${fmtAxis({ p, r, a })}</div>
-    <div class="empty">no player has ever recorded this exact stat line</div>
+    <div class="row"><span class="k">box score</span><span class="v">${linkHtml}</span></div>
   `;
 }
 function showDetailForEnclosed(p, r, a) {
@@ -571,23 +582,152 @@ renderer.domElement.addEventListener('mouseup', (ev) => {
     const e = state.enclosedIndex[hit.instanceId];
     showDetailForEnclosed(e.p, e.r, e.a);
   }
-  else if (hit.object === state.zeroMesh) {
-    const z = state.zeroIndex[hit.instanceId];
-    showDetailForZero(z.p, z.r, z.a);
+});
+
+// ---- Visibility filters (hide-scorigamis + per-player filter) ----
+// Per-cell visibility is applied by swapping the instance matrix between the
+// cell's position and a zero-scale matrix. Original positions are stashed in
+// state.instanceIndex (each cell has p,r,a), so no extra storage is needed.
+// Park hidden instances far off-camera AND zero-scaled so they don't render
+// and can't be raycasted accidentally.
+const HIDE_MATRIX = new THREE.Matrix4()
+  .makeTranslation(-1e6, -1e6, -1e6)
+  .multiply(new THREE.Matrix4().makeScale(0, 0, 0));
+const blockedPlayers = new Set();   // displayed names
+let blockedLower = new Set();        // case-insensitive lookup, rebuilt on change
+
+function refreshBlockedLower() {
+  blockedLower = new Set([...blockedPlayers].map(s => s.toLowerCase()));
+}
+
+function getYearRange() {
+  // Returns {min, max} as integers, or null on either bound if input is blank.
+  const fromEl = document.getElementById('yearFrom');
+  const toEl = document.getElementById('yearTo');
+  const fromV = fromEl.value === '' ? null : parseInt(fromEl.value, 10);
+  const toV = toEl.value === '' ? null : parseInt(toEl.value, 10);
+  return { min: Number.isFinite(fromV) ? fromV : null,
+           max: Number.isFinite(toV) ? toV : null };
+}
+
+function applyVisibilityFilters() {
+  const mesh = state.occMesh;
+  if (!mesh) return;
+  const hideScor = document.getElementById('hideScorigamis').checked;
+  const yr = getYearRange();
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < state.instanceIndex.length; i++) {
+    const c = state.instanceIndex[i];
+    const playerBlocked = c.n === 1 && c.pl && blockedLower.has(c.pl.toLowerCase());
+    // Year filter: cell's most-recent date (c.d, "YYYY-MM-DD") must fall in
+    // [yr.min, yr.max]. Cells lacking a date are kept (no signal to filter on).
+    let yearBlocked = false;
+    if ((yr.min !== null || yr.max !== null) && c.d) {
+      const yyyy = parseInt(c.d.slice(0, 4), 10);
+      if (yr.min !== null && yyyy < yr.min) yearBlocked = true;
+      if (yr.max !== null && yyyy > yr.max) yearBlocked = true;
+    }
+    const blocked = (hideScor && c.n === 1) || playerBlocked || yearBlocked;
+    if (blocked) {
+      mesh.setMatrixAt(i, HIDE_MATRIX);
+    } else {
+      dummy.position.set(c.p, c.r, c.a);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  // Leaderboard is derived from visible n=1 cells, excluding the "hide
+  // scorigamis" toggle (which is cosmetic) but honoring year + player filters.
+  recomputeLeaderboard();
+}
+
+function recomputeLeaderboard() {
+  if (!state.instanceIndex || !state.instanceIndex.length) return;
+  const yr = getYearRange();
+  const counts = new Map();   // player_name -> count
+  for (const c of state.instanceIndex) {
+    if (c.n !== 1 || !c.pl) continue;
+    if ((yr.min !== null || yr.max !== null) && c.d) {
+      const yyyy = parseInt(c.d.slice(0, 4), 10);
+      if (yr.min !== null && yyyy < yr.min) continue;
+      if (yr.max !== null && yyyy > yr.max) continue;
+    }
+    if (blockedLower.has(c.pl.toLowerCase())) continue;
+    counts.set(c.pl, (counts.get(c.pl) || 0) + 1);
+  }
+  const sorted = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 50);
+  lbListEl.innerHTML = sorted.length
+    ? sorted.map(([name, n], i) =>
+        `<div class="lbRow"><span class="rk">${i + 1}</span><span class="nm">${name}</span><span class="ct">${n}</span></div>`
+      ).join('')
+    : '<div class="hint">no scorigamis match current filters</div>';
+}
+
+function updateYearBounds() {
+  // Compute the data's min/max year so the inputs can act as bounds + show
+  // the available range. Called after each cube load.
+  let min = Infinity, max = -Infinity;
+  for (const c of state.instanceIndex) {
+    if (!c.d) continue;
+    const y = parseInt(c.d.slice(0, 4), 10);
+    if (!Number.isFinite(y)) continue;
+    if (y < min) min = y;
+    if (y > max) max = y;
+  }
+  const fromEl = document.getElementById('yearFrom');
+  const toEl = document.getElementById('yearTo');
+  if (Number.isFinite(min) && Number.isFinite(max)) {
+    fromEl.min = toEl.min = min;
+    fromEl.max = toEl.max = max;
+    fromEl.placeholder = String(min);
+    toEl.placeholder = String(max);
+    document.getElementById('yearHint').textContent =
+      `data spans ${min}–${max} (most-recent date)`;
+  }
+}
+
+function renderPlayerChips() {
+  const root = document.getElementById('playerFilterChips');
+  root.innerHTML = '';
+  for (const name of blockedPlayers) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${name} <button title="remove">×</button>`;
+    chip.querySelector('button').addEventListener('click', () => {
+      blockedPlayers.delete(name);
+      refreshBlockedLower();
+      renderPlayerChips();
+      applyVisibilityFilters();
+    });
+    root.appendChild(chip);
+  }
+}
+
+document.getElementById('hideScorigamis').addEventListener('change', applyVisibilityFilters);
+
+document.getElementById('yearFrom').addEventListener('input', applyVisibilityFilters);
+document.getElementById('yearTo').addEventListener('input', applyVisibilityFilters);
+
+const playerFilterInputEl = document.getElementById('playerFilterInput');
+playerFilterInputEl.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter') {
+    const name = playerFilterInputEl.value.trim();
+    if (name) {
+      blockedPlayers.add(name);
+      refreshBlockedLower();
+      playerFilterInputEl.value = '';
+      renderPlayerChips();
+      applyVisibilityFilters();
+    }
   }
 });
 
 // ---- UI bindings ----
 document.getElementById('showEnclosed').addEventListener('change', (e) => {
   if (state.enclosedMesh) state.enclosedMesh.visible = e.target.checked;
-});
-document.getElementById('showZeros').addEventListener('change', (e) => {
-  if (e.target.checked) {
-    buildZeroMesh();
-    if (state.zeroMesh) state.zeroMesh.visible = true;
-  } else if (state.zeroMesh) {
-    state.zeroMesh.visible = false;
-  }
 });
 const globalAlphaEl = document.getElementById('globalAlpha');
 const globalAlphaNumEl = document.getElementById('globalAlphaNum');
@@ -619,10 +759,6 @@ function applyPeel() {
     const total = state.instanceIndex.length;
     state.occMesh.count = Math.max(0, Math.min(total, Math.round(total * keepFrac)));
   }
-  if (state.zeroMesh) {
-    const total = state.zeroIndex.length;
-    state.zeroMesh.count = Math.max(0, Math.min(total, Math.round(total * keepFrac)));
-  }
   if (state.enclosedMesh) {
     const total = state.enclosedIndex.length;
     state.enclosedMesh.count = Math.max(0, Math.min(total, Math.round(total * keepFrac)));
@@ -638,22 +774,79 @@ document.getElementById('showAxes').addEventListener('change', (e) => {
   if (a) a.visible = e.target.checked;
 });
 
+
 // ---- Data loading (static) ----
-// Each combo is precomputed into tally/<a>_<b>_<c>.json with keys sorted
-// alphabetically. When the user picks a different X/Y/Z order, we remap.
+// Sport-keyed: tally/<sport>/<a>_<b>_<c>.json. Each tab swaps the SPORT
+// variable, which prefixes all data fetches. STATS_META is per-sport so the
+// dropdowns repopulate cleanly when switching.
+const SPORTS = {
+  nba: {
+    label: 'NBA',
+    title: 'BoxScorigami',
+    defaults: ['pts', 'reb', 'ast'],
+  },
+  nfl: {
+    label: 'NFL',
+    title: 'BoxScorigami',
+    defaults: ['rec', 'rec_yds', 'rec_td'],
+  },
+};
+
+// Per-sport box-score-URL builder. Receives a cell, returns a full URL or
+// null if we can't reliably construct one.
+const NBA_TO_BBR_TEAM = { BKN: 'BRK', CHA: 'CHO', PHX: 'PHO' };
+const NFL_TO_PFR_TEAM = {
+  KC: 'kan', NE: 'nwe', NO: 'nor', TB: 'tam', GB: 'gnb', SF: 'sfo',
+  LV: 'rai', LAR: 'ram', LAC: 'sdg', LA: 'ram',
+  ARI: 'crd', BAL: 'rav', TEN: 'oti', IND: 'clt', HOU: 'htx',
+  STL: 'ram', SD: 'sdg', OAK: 'rai',
+};
+
+function boxscoreUrl(cell) {
+  if (!cell || !cell.d) return null;
+  const ymd = cell.d.replaceAll('-', '');
+  if (SPORT === 'nba') {
+    if (!cell.m) return null;
+    // Matchup is "TEAM vs. OPP" (home) or "TEAM @ OPP" (away).
+    let home;
+    if (cell.m.includes(' @ ')) home = cell.m.split(' @ ')[1].trim();
+    else if (cell.m.includes(' vs. ') || cell.m.includes(' vs ')) {
+      home = cell.m.split(/ vs\.? /)[0].trim();
+    } else return null;
+    home = NBA_TO_BBR_TEAM[home] || home;
+    return `https://www.basketball-reference.com/boxscores/${ymd}0${home}.html`;
+  }
+  if (SPORT === 'nfl') {
+    if (!cell.g) return null;
+    // PFR-slug game IDs (1933-1998 historical data) are already the URL key.
+    if (/^\d{8}0[a-z]{3}$/i.test(cell.g)) {
+      return `https://www.pro-football-reference.com/boxscores/${cell.g.toLowerCase()}.htm`;
+    }
+    // nflverse format: "YYYY_WW_AWAY_HOME" — last token is home.
+    const parts = cell.g.split('_');
+    if (parts.length !== 4) return null;
+    const home = parts[3];
+    const pfr = NFL_TO_PFR_TEAM[home] || home.toLowerCase();
+    return `https://www.pro-football-reference.com/boxscores/${ymd}0${pfr}.htm`;
+  }
+  return null;
+}
+let SPORT = 'nba';
 const STATS_META = {};
 
 async function loadStats() {
-  const r = await fetch('stats.json');
-  if (!r.ok) throw new Error('GET stats.json: ' + r.status);
+  const r = await fetch(`${SPORT}/stats.json`);
+  if (!r.ok) throw new Error(`GET ${SPORT}/stats.json: ` + r.status);
   const stats = (await r.json()).stats;
+  // Reset and refill — different sport, different stat keys.
+  for (const k of Object.keys(STATS_META)) delete STATS_META[k];
   for (const s of stats) STATS_META[s.key] = s;
   return stats;
 }
 
 async function loadTally(x, y, z) {
   const fileKeys = [x, y, z].slice().sort();
-  const url = `tally/${fileKeys.join('_')}.json`;
+  const url = `${SPORT}/tally/${fileKeys.join('_')}.json`;
   statusEl.textContent = `loading ${x}/${y}/${z}...`;
   const r = await fetch(url);
   if (!r.ok) {
@@ -713,9 +906,9 @@ async function refresh() {
   try {
     const data = await loadTally(x, y, z);
     buildCube(data);
-    lbListEl.innerHTML = (data.leaderboard || []).map((p, i) =>
-      `<div class="lbRow"><span class="rk">${i + 1}</span><span class="nm">${p.name}</span><span class="ct">${p.n}</span></div>`
-    ).join('') || '<div class="hint">no n=1 cells</div>';
+    // Leaderboard is now computed client-side from state.instanceIndex so
+    // year/player filters stay in sync. buildCube() already triggered
+    // recomputeLeaderboard() via applyVisibilityFilters().
     lbHintEl.textContent = `Most unique ${data.axes.x.label}/${data.axes.y.label}/${data.axes.z.label} lines (n=1)`;
     axisHintEl.textContent = `${data.axes.x.label} × ${data.axes.y.label} × ${data.axes.z.label}`;
     detailEl.style.display = 'none';
@@ -742,15 +935,42 @@ axisXEl.addEventListener('change', () => { enforceDistinct(0); refresh(); });
 axisYEl.addEventListener('change', () => { enforceDistinct(1); refresh(); });
 axisZEl.addEventListener('change', () => { enforceDistinct(2); refresh(); });
 
-(async () => {
+async function loadSport(sport) {
+  if (!SPORTS[sport]) return;
+  SPORT = sport;
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.sport === sport);
+  });
+  document.getElementById('cubeTitle').textContent = SPORTS[sport].title;
+  document.title = 'BoxScorigami';
+  location.hash = `sport=${sport}`;
+  // Player names are sport-specific — clear any prior chips on switch.
+  blockedPlayers.clear();
+  refreshBlockedLower();
+  renderPlayerChips();
+  // Reset year filter inputs; updateYearBounds() runs after data load.
+  document.getElementById('yearFrom').value = '';
+  document.getElementById('yearTo').value = '';
   try {
+    statusEl.textContent = `loading ${SPORTS[sport].label} ...`;
     const stats = await loadStats();
-    fillDropdowns(stats, ['pts', 'reb', 'ast']);
+    fillDropdowns(stats, SPORTS[sport].defaults);
     await refresh();
   } catch (err) {
     statusEl.textContent = 'ERROR: ' + err.message;
     console.error(err);
   }
+}
+
+document.querySelectorAll('#tabs button').forEach(b => {
+  b.addEventListener('click', () => loadSport(b.dataset.sport));
+});
+
+(async () => {
+  // Honor #sport=nfl in the URL on first load, default to NBA.
+  const m = /sport=(\w+)/.exec(location.hash);
+  const initial = m && SPORTS[m[1]] ? m[1] : 'nba';
+  await loadSport(initial);
 })();
 
 function animate() {

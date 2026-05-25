@@ -1,18 +1,10 @@
-"""Pre-generate static JSON for every C(13,3)=286 axis-stat combo.
+"""Pre-generate static JSON for every C(13,3)=286 NFL axis-stat combo.
 
-Produces a self-contained `public/` directory that can be deployed to any
-static host (Vercel, GitHub Pages, Netlify, S3, ...). The viewer fetches
-these files directly — no backend, no Python at runtime.
-
-Layout written:
-    scorigami/public/
-        index.html      (copy of cube.html)
-        stats.json      (axis metadata for the dropdowns)
-        tally/
-            <a>_<b>_<c>.json   (alphabetically-sorted keys; 286 files)
+Mirror of scorigami/export_static.py. Produces nfl/public/ as a self-
+contained static deploy folder.
 
 Run:
-    python3 scorigami/export_static.py
+    python3 nfl/export_static.py
 """
 import json
 import shutil
@@ -25,13 +17,12 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from server import STATS, compute_payload  # noqa: E402
 
-OUT_DIR   = HERE.parent / "public" / "nba"
+OUT_DIR   = HERE.parent / "public" / "nfl"
 TALLY_DIR = OUT_DIR / "tally"
 TALLY_DIR.mkdir(parents=True, exist_ok=True)
 
 stats_keys = list(STATS.keys())
 
-# 1) stats.json — drives the X/Y/Z dropdowns in the UI
 stats_payload = {
     "stats": [
         {"key": k, "label": STATS[k]["label"], "color": STATS[k]["color"]}
@@ -41,12 +32,10 @@ stats_payload = {
 (OUT_DIR / "stats.json").write_text(json.dumps(stats_payload, separators=(",", ":")))
 print(f"-> public/stats.json  ({len(stats_keys)} stats)")
 
-# 2) Copy cube.html -> public/index.html so the deploy serves the viewer at /
 # cube.html copy removed — the unified site uses public/index.html at the
 # repo root (sport-tabbed viewer). This script only writes sport-specific
-# data into public/nba/.
+# data into public/nfl/.
 
-# 3) All C(n,3) combos, with each filename in canonical alphabetical order.
 combos = list(combinations(sorted(stats_keys), 3))
 print(f"\ngenerating {len(combos)} combo files ...")
 
