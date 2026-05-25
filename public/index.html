@@ -133,17 +133,14 @@
   <div id="controls">
     <label><input type="checkbox" id="showEnclosed" checked /> show enclosed empties (6-neighbor)</label>
     <label><input type="checkbox" id="hideScorigamis" /> hide scorigamis (n=1 red cells)</label>
-    <div class="sliderRow">
-      <span>opacity</span>
-      <input type="range" id="globalAlpha" min="0" max="1" step="0.01" value="1.0" />
-      <span class="num" id="globalAlphaNum">1.00</span>
-    </div>
+    <label><input type="checkbox" id="hideRepeated" /> hide repeated games (n≥2 green cells)</label>
     <div class="sliderRow">
       <span>peel</span>
       <input type="range" id="peel" min="0" max="1" step="0.005" value="0" />
       <span class="num" id="peelNum">0.00</span>
     </div>
     <label><input type="checkbox" id="showAxes" checked /> show axes</label>
+    <label><input type="checkbox" id="showLabels" checked /> show labels</label>
   </div>
 
   <div class="subpanel" id="yearFilterBox">
@@ -427,6 +424,10 @@ function buildCube(data) {
   const maxDim = Math.max(MAX_X, MAX_Y, MAX_Z);
   const labelHeight = Math.min(14, Math.max(1.2, maxDim * 0.10));
   const labelOffset = labelHeight * 0.4;
+  // Labels live in a SEPARATE group so the "show labels" toggle can hide
+  // text without removing the colored axis lines + bounding box.
+  const labelsGroup = new THREE.Group();
+  labelsGroup.name = 'labels';
   const labelX = makeLabel(axes.x.label, axes.x.color, labelHeight);
   const labelY = makeLabel(axes.y.label, axes.y.color, labelHeight);
   const labelZ = makeLabel(axes.z.label, axes.z.color, labelHeight);
@@ -435,9 +436,11 @@ function buildCube(data) {
   labelZ.position.set(-pad, -pad, MAX_Z + pad + labelOffset);
   const labelOrigin = makeLabel('0,0,0', '#8b94a0', labelHeight * 0.6);
   labelOrigin.position.set(-pad - labelOffset * 0.5, -pad - labelOffset * 0.5, -pad - labelOffset * 0.5);
-  axesGroup.add(labelX, labelY, labelZ, labelOrigin);
+  labelsGroup.add(labelX, labelY, labelZ, labelOrigin);
   cubeGroup.add(axesGroup);
+  cubeGroup.add(labelsGroup);
   axesGroup.visible = document.getElementById('showAxes').checked;
+  labelsGroup.visible = document.getElementById('showLabels').checked;
 
   // --- Frame camera to fit the new cube ---
   const cx = MAX_X / 2, cy = MAX_Y / 2, cz = MAX_Z / 2;
@@ -454,7 +457,6 @@ function buildCube(data) {
   }
 
   applyPeel();
-  applyOpacity(parseFloat(globalAlphaEl.value));
 
   statusEl.textContent =
     `${cells.length.toLocaleString()} occupied cells · bbox ${MAX_X}×${MAX_Y}×${MAX_Z}`;
@@ -614,6 +616,7 @@ function applyVisibilityFilters() {
   const mesh = state.occMesh;
   if (!mesh) return;
   const hideScor = document.getElementById('hideScorigamis').checked;
+  const hideRep = document.getElementById('hideRepeated').checked;
   const yr = getYearRange();
   const dummy = new THREE.Object3D();
   for (let i = 0; i < state.instanceIndex.length; i++) {
@@ -627,7 +630,8 @@ function applyVisibilityFilters() {
       if (yr.min !== null && yyyy < yr.min) yearBlocked = true;
       if (yr.max !== null && yyyy > yr.max) yearBlocked = true;
     }
-    const blocked = (hideScor && c.n === 1) || playerBlocked || yearBlocked;
+    const blocked = (hideScor && c.n === 1) || (hideRep && c.n >= 2) ||
+                    playerBlocked || yearBlocked;
     if (blocked) {
       mesh.setMatrixAt(i, HIDE_MATRIX);
     } else {
@@ -707,6 +711,7 @@ function renderPlayerChips() {
 }
 
 document.getElementById('hideScorigamis').addEventListener('change', applyVisibilityFilters);
+document.getElementById('hideRepeated').addEventListener('change', applyVisibilityFilters);
 
 document.getElementById('yearFrom').addEventListener('input', applyVisibilityFilters);
 document.getElementById('yearTo').addEventListener('input', applyVisibilityFilters);
@@ -728,26 +733,6 @@ playerFilterInputEl.addEventListener('keydown', (ev) => {
 // ---- UI bindings ----
 document.getElementById('showEnclosed').addEventListener('change', (e) => {
   if (state.enclosedMesh) state.enclosedMesh.visible = e.target.checked;
-});
-const globalAlphaEl = document.getElementById('globalAlpha');
-const globalAlphaNumEl = document.getElementById('globalAlphaNum');
-function applyOpacity(v) {
-  SHARED.uGlobalOpacity.value = v;
-  globalAlphaNumEl.textContent = v.toFixed(2);
-  // Flip occupied voxels in/out of the transparent render path so they
-  // properly occlude each other at full opacity.
-  if (state.occMesh) {
-    const wantsTransparent = v < 0.999;
-    const mat = state.occMesh.material;
-    if (mat.transparent !== wantsTransparent) {
-      mat.transparent = wantsTransparent;
-      mat.depthWrite = !wantsTransparent;
-      mat.needsUpdate = true;
-    }
-  }
-}
-globalAlphaEl.addEventListener('input', () => {
-  applyOpacity(parseFloat(globalAlphaEl.value));
 });
 const peelEl = document.getElementById('peel');
 const peelNumEl = document.getElementById('peelNum');
@@ -772,6 +757,10 @@ peelEl.addEventListener('input', () => {
 document.getElementById('showAxes').addEventListener('change', (e) => {
   const a = cubeGroup.getObjectByName('axes');
   if (a) a.visible = e.target.checked;
+});
+document.getElementById('showLabels').addEventListener('change', (e) => {
+  const l = cubeGroup.getObjectByName('labels');
+  if (l) l.visible = e.target.checked;
 });
 
 
