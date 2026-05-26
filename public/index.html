@@ -4,9 +4,13 @@
 <meta charset="utf-8" />
 <title>BoxScorigami</title>
 <link rel="icon" type="image/svg+xml" href="boxscorigami.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Ramabhadra&family=Changa:wght@400;700&display=swap" rel="stylesheet" />
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #0d0f12; color: #e6e8eb;
-               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overflow: hidden; }
+               font-family: 'Ramabhadra', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+               overflow: hidden; }
   #canvas { display: block; width: 100%; height: 100%; }
   .panel {
     position: absolute; padding: 14px 16px;
@@ -20,6 +24,10 @@
     display: flex; flex-direction: column;
   }
   h1, h2 { font-size: 14px; margin: 0 0 8px 0; letter-spacing: .02em; }
+  #cubeTitle {
+    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+    font-weight: 700; font-size: 18px; letter-spacing: .04em;
+  }
   .hint { color: #8b94a0; font-size: 12px; }
   .row { display: flex; justify-content: space-between; gap: 12px; margin: 2px 0; }
   .row .k { color: #8b94a0; }
@@ -42,7 +50,7 @@
     margin-top: 8px; padding: 8px 10px;
     background: rgba(0,0,0,0.18); border: 2px solid #3a4150; border-radius: 6px;
   }
-  #axisGrid .lab { font-weight: 600; font-variant-numeric: tabular-nums; }
+  #axisGrid .lab { font-weight: 600; font-variant-numeric: tabular-nums; color: #8b94a0; }
 
   .subpanel {
     margin-top: 12px; padding: 10px 12px;
@@ -85,12 +93,57 @@
   }
   #tabs button {
     background: transparent; color: #8b94a0; border: 0;
-    padding: 6px 22px; font-size: 13px; font-weight: 600;
-    border-radius: 5px; cursor: pointer; letter-spacing: .03em;
-    font-family: inherit;
+    padding: 6px 22px; font-size: 14px; font-weight: 700;
+    border-radius: 5px; cursor: pointer; letter-spacing: .04em;
+    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
   }
   #tabs button:hover { color: #e6e8eb; }
   #tabs button.active { background: #2a2f36; color: #f7c948; }
+
+  .panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 8px;
+  }
+  .panel-header h1, .panel-header h2 { margin: 0; }
+  .panel-btn {
+    background: transparent; color: #8b94a0; border: 1px solid #3a4150;
+    border-radius: 4px; cursor: pointer;
+    width: 22px; height: 22px; padding: 0;
+    font-size: 13px; line-height: 1; font-family: inherit;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: 0 0 auto;
+  }
+  .panel-btn:hover { color: #f7c948; border-color: #f7c948; }
+  /* Collapse everything except the header when minimized. */
+  .panel.minimized > *:not(.panel-header) { display: none !important; }
+  .panel.minimized { padding-bottom: 12px; }
+
+  .info-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 14px; height: 14px; margin-left: 6px;
+    background: #2a2f36; color: #8b94a0;
+    border: 1px solid #3a4150; border-radius: 50%;
+    font-size: 10px; font-weight: 700; cursor: pointer;
+    user-select: none;
+  }
+  .info-icon:hover { color: #f7c948; border-color: #f7c948; }
+  .info-popover {
+    position: absolute; max-width: 240px; z-index: 100;
+    background: #1a1d23; color: #e6e8eb;
+    border: 1px solid #3a4150; border-radius: 6px;
+    padding: 8px 10px; font-size: 12px; line-height: 1.45;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+  }
+
+  .filter-toggle {
+    margin-top: 8px;
+    background: transparent; color: #8b94a0;
+    border: 1px solid #3a4150; border-radius: 4px;
+    padding: 4px 12px; font-size: 11px; cursor: pointer;
+    font-family: inherit; letter-spacing: .04em;
+  }
+  .filter-toggle:hover { color: #e6e8eb; border-color: #5a6170; }
+  .filter-toggle.active { background: #2a2f36; color: #f7c948; border-color: #f7c948; }
 
   .chip {
     display: inline-flex; align-items: center; gap: 4px;
@@ -115,62 +168,72 @@
 </div>
 
 <div id="info" class="panel">
-  <h1 id="cubeTitle">BoxScorigami</h1>
-  <div class="hint" id="axisHint">choose any three stats for the axes</div>
+  <div class="panel-header">
+    <h1 id="cubeTitle">BoxScorigami</h1>
+    <button class="panel-btn" data-action="minimize" data-target="info" title="minimize">−</button>
+  </div>
+  <div class="hint" id="axisHint">Choose any three stats for the axes</div>
 
   <div id="axisGrid">
-    <span class="lab" style="color:#ff6b6b">X</span><select id="axisX"></select>
-    <span class="lab" style="color:#6bd06b">Y</span><select id="axisY"></select>
-    <span class="lab" style="color:#6b9eff">Z</span><select id="axisZ"></select>
+    <span class="lab">X</span><select id="axisX"></select>
+    <span class="lab">Y</span><select id="axisY"></select>
+    <span class="lab">Z</span><select id="axisZ"></select>
   </div>
 
   <div id="legend">
     <span><span class="sw" style="background:#e53935"></span>1</span>
     <span><span class="sw" style="background:#43a047"></span>2+</span>
-    <span><span class="sw" style="background:#4dd0e1"></span>enclosed</span>
+    <span><span class="sw" style="background:#4dd0e1"></span>Near Miss</span>
   </div>
 
   <div id="controls">
-    <label><input type="checkbox" id="showEnclosed" checked /> show enclosed empties (6-neighbor)</label>
-    <label><input type="checkbox" id="hideScorigamis" /> hide scorigamis (n=1 red cells)</label>
-    <label><input type="checkbox" id="hideRepeated" /> hide repeated games (n≥2 green cells)</label>
+    <label><input type="checkbox" id="showEnclosed" /> Show Near Misses<span class="info-icon" data-tip="Statlines that haven't happened but are surrounded by statlines that have">?</span></label>
+    <label><input type="checkbox" id="hideScorigamis" /> Hide Scorigamis (Red Cells)</label>
+    <label><input type="checkbox" id="hideRepeated" /> Hide Repeated Games (Green Cells)</label>
     <div class="sliderRow">
-      <span>peel</span>
+      <span>Peel</span>
       <input type="range" id="peel" min="0" max="1" step="0.005" value="0" />
       <span class="num" id="peelNum">0.00</span>
     </div>
-    <label><input type="checkbox" id="showAxes" checked /> show axes</label>
-    <label><input type="checkbox" id="showLabels" checked /> show labels</label>
+    <label><input type="checkbox" id="showAxes" checked /> Show Axes</label>
+    <label><input type="checkbox" id="showLabels" checked /> Show Labels</label>
   </div>
 
   <div class="subpanel" id="yearFilterBox">
     <h2>Year Filter</h2>
     <div style="display:grid;grid-template-columns:1fr 12px 1fr;gap:6px;align-items:center">
-      <input type="number" id="yearFrom" placeholder="from" />
+      <input type="number" id="yearFrom" placeholder="From" />
       <span style="text-align:center;color:#8b94a0">–</span>
-      <input type="number" id="yearTo" placeholder="to" />
+      <input type="number" id="yearTo" placeholder="To" />
     </div>
-    <div class="hint" id="yearHint" style="margin-top:6px">filter by most-recent game year</div>
+    <div class="hint" id="yearHint" style="margin-top:6px">Filter by most-recent game year</div>
   </div>
 
   <div class="subpanel" id="playerFilterBox">
     <h2>Player Filter</h2>
     <input type="text" id="playerFilterInput"
-           placeholder="hide a player's scorigamis (type + Enter)" />
+           placeholder="Hide a player's scorigamis (type + Enter)" />
     <div id="playerFilterChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px"></div>
+    <button id="playerFilterReverse" class="filter-toggle" title="invert: show only the listed players">Reverse</button>
   </div>
 
-  <div class="hint" style="margin-top:10px">drag = orbit · scroll = zoom · right-drag = pan · click a cell</div>
+  <div class="hint" style="margin-top:10px">Drag = orbit · Scroll = zoom · Right-drag = pan · Click a cell</div>
 </div>
 
 <div id="detail" class="panel">
-  <h2>Cell details</h2>
+  <div class="panel-header">
+    <h2>Cell Details</h2>
+    <button class="panel-btn" data-action="close" data-target="detail" title="close">×</button>
+  </div>
   <div id="detailBody"></div>
 </div>
 
-<div id="leaders" class="panel">
-  <h2>BoxScorigami leaderboard</h2>
-  <div class="hint" id="lbHint">Most unique stat lines (n=1)</div>
+<div id="leaders" class="panel minimized">
+  <div class="panel-header">
+    <h2>BoxScorigami Leaderboard</h2>
+    <button class="panel-btn" data-action="minimize" data-target="leaders" title="expand">+</button>
+  </div>
+  <div class="hint" id="lbHint">Most Unique Stat Lines</div>
   <div id="lbList"></div>
 </div>
 
@@ -243,13 +306,13 @@ function makeLabel(text, color = '#e6e8eb', heightUnits = 14) {
   const fontPx = 64;
   const pad = 16;
   const measure = document.createElement('canvas').getContext('2d');
-  measure.font = `bold ${fontPx}px -apple-system, "Segoe UI", sans-serif`;
+  measure.font = `bold ${fontPx}px 'Ramabhadra', -apple-system, "Segoe UI", sans-serif`;
   const w = Math.ceil(measure.measureText(text).width) + pad * 2;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = fontPx + pad * 2;
   const ctx = canvas.getContext('2d');
-  ctx.font = `bold ${fontPx}px -apple-system, "Segoe UI", sans-serif`;
+  ctx.font = `bold ${fontPx}px 'Ramabhadra', -apple-system, "Segoe UI", sans-serif`;
   ctx.fillStyle = color;
   ctx.textBaseline = 'middle';
   ctx.shadowColor = 'rgba(0,0,0,0.8)';
@@ -407,9 +470,11 @@ function buildCube(data) {
     const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]);
     return new THREE.Line(g, new THREE.LineBasicMaterial({ color: hex }));
   };
-  axesGroup.add(makeLine([-pad, -pad, -pad], [MAX_X + pad, -pad, -pad], axes.x.color));
-  axesGroup.add(makeLine([-pad, -pad, -pad], [-pad, MAX_Y + pad, -pad], axes.y.color));
-  axesGroup.add(makeLine([-pad, -pad, -pad], [-pad, -pad, MAX_Z + pad], axes.z.color));
+  // Neutral axis color so the bright voxel colors stay the visual story.
+  const AXIS_COLOR = 0x8b94a0;
+  axesGroup.add(makeLine([-pad, -pad, -pad], [MAX_X + pad, -pad, -pad], AXIS_COLOR));
+  axesGroup.add(makeLine([-pad, -pad, -pad], [-pad, MAX_Y + pad, -pad], AXIS_COLOR));
+  axesGroup.add(makeLine([-pad, -pad, -pad], [-pad, -pad, MAX_Z + pad], AXIS_COLOR));
 
   const bboxGeo = new THREE.BoxGeometry(MAX_X + 1, MAX_Y + 1, MAX_Z + 1);
   const bbox = new THREE.LineSegments(
@@ -422,15 +487,16 @@ function buildCube(data) {
   // Scale labels to the cube size — clamped so they're readable on tiny
   // cubes (e.g. STL/BLK/TOV ~12 units) without dominating big ones.
   const maxDim = Math.max(MAX_X, MAX_Y, MAX_Z);
-  const labelHeight = Math.min(14, Math.max(1.2, maxDim * 0.10));
+  const labelHeight = Math.min(8, Math.max(0.8, maxDim * 0.06));
   const labelOffset = labelHeight * 0.4;
   // Labels live in a SEPARATE group so the "show labels" toggle can hide
   // text without removing the colored axis lines + bounding box.
   const labelsGroup = new THREE.Group();
   labelsGroup.name = 'labels';
-  const labelX = makeLabel(axes.x.label, axes.x.color, labelHeight);
-  const labelY = makeLabel(axes.y.label, axes.y.color, labelHeight);
-  const labelZ = makeLabel(axes.z.label, axes.z.color, labelHeight);
+  const LABEL_COLOR = '#8b94a0';
+  const labelX = makeLabel(axes.x.label, LABEL_COLOR, labelHeight);
+  const labelY = makeLabel(axes.y.label, LABEL_COLOR, labelHeight);
+  const labelZ = makeLabel(axes.z.label, LABEL_COLOR, labelHeight);
   labelX.position.set(MAX_X + pad + labelOffset, -pad, -pad);
   labelY.position.set(-pad, MAX_Y + pad + labelOffset, -pad);
   labelZ.position.set(-pad, -pad, MAX_Z + pad + labelOffset);
@@ -443,9 +509,13 @@ function buildCube(data) {
   labelsGroup.visible = document.getElementById('showLabels').checked;
 
   // --- Frame camera to fit the new cube ---
+  // Use the bounding-box diagonal so cubes that are long on one axis (e.g.
+  // NFL Rec Yds at 336x21x5) don't get pushed out as far as cubes where the
+  // long axis is more central to the view.
   const cx = MAX_X / 2, cy = MAX_Y / 2, cz = MAX_Z / 2;
   controls.target.set(cx, cy, cz);
-  const r0 = Math.max(MAX_X, MAX_Y, MAX_Z, 10) * 1.8;
+  const diag = Math.sqrt(MAX_X * MAX_X + MAX_Y * MAX_Y + MAX_Z * MAX_Z);
+  const r0 = Math.max(diag, 12) * 0.9;
   camera.position.set(cx + r0 * 0.9, cy + r0 * 0.7, cz + r0 * 1.1);
   camera.lookAt(cx, cy, cz);
   controls.update();
@@ -459,7 +529,7 @@ function buildCube(data) {
   applyPeel();
 
   statusEl.textContent =
-    `${cells.length.toLocaleString()} occupied cells · bbox ${MAX_X}×${MAX_Y}×${MAX_Z}`;
+    `Made by Orion Hoch · BBox = ${MAX_X}×${MAX_Y}×${MAX_Z}`;
 }
 
 function buildEnclosedMesh() {
@@ -534,17 +604,20 @@ function fmtAxis(c) {
 function showDetailForCell(c) {
   detailEl.style.display = 'block';
   const url = boxscoreUrl(c);
-  const linkLabel = SPORT === 'nfl' ? 'pro-football-reference' : 'basketball-reference';
+  const linkLabel =
+    SPORT === 'nfl' ? 'pro-football-reference' :
+    SPORT === 'mlb' ? 'mlb.com' :
+    'basketball-reference';
   const linkHtml = url
     ? `<a href="${url}" target="_blank" rel="noopener" style="color:#f7c948">${linkLabel} ↗</a>`
     : (c.g || '—');
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis(c)}</div>
-    <div class="row"><span class="k">tally</span><span class="v">${c.n.toLocaleString()}</span></div>
-    <div class="row"><span class="k">most recent</span><span class="v">${c.d || '—'}</span></div>
-    <div class="row"><span class="k">player</span><span class="v">${c.pl || 'unknown'} ${c.t ? '(' + c.t + ')' : ''}</span></div>
-    <div class="row"><span class="k">matchup</span><span class="v">${c.m || '—'}</span></div>
-    <div class="row"><span class="k">box score</span><span class="v">${linkHtml}</span></div>
+    <div class="row"><span class="k">Tally</span><span class="v">${c.n.toLocaleString()}</span></div>
+    <div class="row"><span class="k">Most Recent</span><span class="v">${c.d || '—'}</span></div>
+    <div class="row"><span class="k">Player</span><span class="v">${c.pl || 'Unknown'} ${c.t ? '(' + c.t + ')' : ''}</span></div>
+    <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '—'}</span></div>
+    <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
 }
 function showDetailForEnclosed(p, r, a) {
@@ -558,7 +631,7 @@ function showDetailForEnclosed(p, r, a) {
   }).join('');
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis({ p, r, a })}</div>
-    <div class="empty">never recorded — but surrounded on all 6 sides</div>
+    <div class="empty">Near Miss — never recorded, but surrounded on all 6 sides</div>
     ${neighborRows}
   `;
 }
@@ -597,9 +670,26 @@ const HIDE_MATRIX = new THREE.Matrix4()
   .multiply(new THREE.Matrix4().makeScale(0, 0, 0));
 const blockedPlayers = new Set();   // displayed names
 let blockedLower = new Set();        // case-insensitive lookup, rebuilt on change
+let reversePlayerFilter = false;     // false = hide listed; true = show only listed
 
 function refreshBlockedLower() {
   blockedLower = new Set([...blockedPlayers].map(s => s.toLowerCase()));
+}
+
+// Returns true if this cell should be hidden by the player filter.
+// - When no players are listed: never blocked.
+// - Normal mode: blocked when the cell's n=1 latest player is in the list.
+// - Reverse ("Show only listed") mode: hide every n>=2 cell (we can't tell
+//   which players were in those) AND every n=1 cell whose player isn't
+//   listed. Net effect: only the listed players' scorigamis remain.
+function isPlayerBlocked(cell) {
+  if (blockedLower.size === 0) return false;
+  if (reversePlayerFilter) {
+    if (cell.n !== 1) return true;
+    return !cell.pl || !blockedLower.has(cell.pl.toLowerCase());
+  }
+  if (cell.n !== 1 || !cell.pl) return false;
+  return blockedLower.has(cell.pl.toLowerCase());
 }
 
 function getYearRange() {
@@ -621,7 +711,7 @@ function applyVisibilityFilters() {
   const dummy = new THREE.Object3D();
   for (let i = 0; i < state.instanceIndex.length; i++) {
     const c = state.instanceIndex[i];
-    const playerBlocked = c.n === 1 && c.pl && blockedLower.has(c.pl.toLowerCase());
+    const playerBlocked = isPlayerBlocked(c);
     // Year filter: cell's most-recent date (c.d, "YYYY-MM-DD") must fall in
     // [yr.min, yr.max]. Cells lacking a date are kept (no signal to filter on).
     let yearBlocked = false;
@@ -657,7 +747,7 @@ function recomputeLeaderboard() {
       if (yr.min !== null && yyyy < yr.min) continue;
       if (yr.max !== null && yyyy > yr.max) continue;
     }
-    if (blockedLower.has(c.pl.toLowerCase())) continue;
+    if (isPlayerBlocked(c)) continue;
     counts.set(c.pl, (counts.get(c.pl) || 0) + 1);
   }
   const sorted = [...counts.entries()]
@@ -667,7 +757,7 @@ function recomputeLeaderboard() {
     ? sorted.map(([name, n], i) =>
         `<div class="lbRow"><span class="rk">${i + 1}</span><span class="nm">${name}</span><span class="ct">${n}</span></div>`
       ).join('')
-    : '<div class="hint">no scorigamis match current filters</div>';
+    : '<div class="hint">No scorigamis match current filters</div>';
 }
 
 function updateYearBounds() {
@@ -713,6 +803,13 @@ function renderPlayerChips() {
 document.getElementById('hideScorigamis').addEventListener('change', applyVisibilityFilters);
 document.getElementById('hideRepeated').addEventListener('change', applyVisibilityFilters);
 
+document.getElementById('playerFilterReverse').addEventListener('click', (e) => {
+  reversePlayerFilter = !reversePlayerFilter;
+  e.currentTarget.classList.toggle('active', reversePlayerFilter);
+  e.currentTarget.textContent = reversePlayerFilter ? 'Show only listed' : 'Reverse';
+  applyVisibilityFilters();
+});
+
 document.getElementById('yearFrom').addEventListener('input', applyVisibilityFilters);
 document.getElementById('yearTo').addEventListener('input', applyVisibilityFilters);
 
@@ -728,6 +825,42 @@ playerFilterInputEl.addEventListener('keydown', (ev) => {
       applyVisibilityFilters();
     }
   }
+});
+
+// ---- Info icon popovers (click ? to toggle explanation tooltip) ----
+document.addEventListener('click', (ev) => {
+  const icon = ev.target.closest('.info-icon');
+  // Always remove any open popover; a fresh one is opened below if needed.
+  document.querySelectorAll('.info-popover').forEach(p => p.remove());
+  if (!icon) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const tip = document.createElement('div');
+  tip.className = 'info-popover';
+  tip.textContent = icon.dataset.tip || '';
+  document.body.appendChild(tip);
+  const rect = icon.getBoundingClientRect();
+  // Place under-and-right of the icon; clamp to viewport.
+  const x = Math.min(window.innerWidth - tip.offsetWidth - 8, rect.left);
+  const y = rect.bottom + 6;
+  tip.style.left = Math.max(8, x) + 'px';
+  tip.style.top = y + 'px';
+});
+
+// ---- Panel header buttons (minimize / close) ----
+document.querySelectorAll('.panel-btn').forEach((btn) => {
+  btn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const panel = document.getElementById(btn.dataset.target);
+    if (!panel) return;
+    if (btn.dataset.action === 'close') {
+      panel.style.display = 'none';
+    } else if (btn.dataset.action === 'minimize') {
+      const minimized = panel.classList.toggle('minimized');
+      btn.textContent = minimized ? '+' : '−';
+      btn.title = minimized ? 'expand' : 'minimize';
+    }
+  });
 });
 
 // ---- UI bindings ----
@@ -777,7 +910,12 @@ const SPORTS = {
   nfl: {
     label: 'NFL',
     title: 'BoxScorigami',
-    defaults: ['rec', 'rec_yds', 'rec_td'],
+    defaults: ['rec_yds', 'rec', 'rec_td'],
+  },
+  mlb: {
+    label: 'MLB',
+    title: 'BoxScorigami',
+    defaults: ['ab', 'h', 'hr'],
   },
 };
 
@@ -817,6 +955,10 @@ function boxscoreUrl(cell) {
     const home = parts[3];
     const pfr = NFL_TO_PFR_TEAM[home] || home.toLowerCase();
     return `https://www.pro-football-reference.com/boxscores/${ymd}0${pfr}.htm`;
+  }
+  if (SPORT === 'mlb') {
+    // MLB Stats API integer gamePk routes cleanly to mlb.com's gameday box.
+    return cell.g ? `https://www.mlb.com/gameday/${cell.g}/final/box` : null;
   }
   return null;
 }
@@ -872,12 +1014,18 @@ async function loadTally(x, y, z) {
   return { axes, cells, leaderboard: data.leaderboard };
 }
 
+// Tracks the last successful (x, y, z). Used to swap axes when the user
+// picks a stat already held by another axis, instead of bumping that axis
+// to an unrelated stat.
+let lastAxes = [];
+
 function fillDropdowns(stats, defaults) {
   const els = [axisXEl, axisYEl, axisZEl];
   els.forEach((el, i) => {
     el.innerHTML = stats.map(s => `<option value="${s.key}">${s.label}</option>`).join('');
     el.value = defaults[i];
   });
+  lastAxes = defaults.slice();
 }
 
 function currentAxes() {
@@ -898,22 +1046,30 @@ async function refresh() {
     // Leaderboard is now computed client-side from state.instanceIndex so
     // year/player filters stay in sync. buildCube() already triggered
     // recomputeLeaderboard() via applyVisibilityFilters().
-    lbHintEl.textContent = `Most unique ${data.axes.x.label}/${data.axes.y.label}/${data.axes.z.label} lines (n=1)`;
+    lbHintEl.textContent = `Most Unique ${data.axes.x.label}/${data.axes.y.label}/${data.axes.z.label} Lines`;
     axisHintEl.textContent = `${data.axes.x.label} × ${data.axes.y.label} × ${data.axes.z.label}`;
     detailEl.style.display = 'none';
+    lastAxes = [x, y, z];
   } catch (err) {
     statusEl.textContent = 'ERROR: ' + err.message;
     console.error(err);
   }
 }
 
-// Avoid duplicate selection by auto-rotating the others
+// When the user picks a stat already held by another axis, SWAP — the
+// other axis takes whatever the changed axis used to hold. Falls back to
+// "first unused stat" only if we don't have a prior value to swap with.
 function enforceDistinct(changed) {
   const els = [axisXEl, axisYEl, axisZEl];
   const vals = els.map(e => e.value);
   const dupIdx = vals.findIndex((v, i) => i !== changed && v === vals[changed]);
   if (dupIdx === -1) return;
-  // Pick a value not in vals
+  const prev = lastAxes[changed];
+  if (prev && prev !== vals[changed]) {
+    els[dupIdx].value = prev;
+    return;
+  }
+  // Fallback (shouldn't normally hit): pick any unused stat.
   const used = new Set(vals);
   for (const opt of els[dupIdx].options) {
     if (!used.has(opt.value)) { els[dupIdx].value = opt.value; return; }
@@ -937,6 +1093,11 @@ async function loadSport(sport) {
   blockedPlayers.clear();
   refreshBlockedLower();
   renderPlayerChips();
+  // Reset reverse-mode along with the chips.
+  reversePlayerFilter = false;
+  const revBtn = document.getElementById('playerFilterReverse');
+  revBtn.classList.remove('active');
+  revBtn.textContent = 'Reverse';
   // Reset year filter inputs; updateYearBounds() runs after data load.
   document.getElementById('yearFrom').value = '';
   document.getElementById('yearTo').value = '';
