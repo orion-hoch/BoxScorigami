@@ -669,11 +669,20 @@ const HIDE_MATRIX = new THREE.Matrix4()
   .makeTranslation(-1e6, -1e6, -1e6)
   .multiply(new THREE.Matrix4().makeScale(0, 0, 0));
 const blockedPlayers = new Set();   // displayed names
-let blockedLower = new Set();        // case-insensitive lookup, rebuilt on change
+let blockedLower = new Set();        // normalized lookup, rebuilt on change
 let reversePlayerFilter = false;     // false = hide listed; true = show only listed
 
+// Strip diacritics + lowercase so "luka doncic" matches "Luka Dončić",
+// "nikola jokic" matches "Nikola Jokić", "ozzie albies" matches "Ozzie
+// Albies", etc. NFD decomposition splits each accented char into base
+// letter + combining mark; we then strip the combining marks (the
+// Unicode "Combining Diacritical Marks" block, U+0300–U+036F).
+function normalizeName(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
 function refreshBlockedLower() {
-  blockedLower = new Set([...blockedPlayers].map(s => s.toLowerCase()));
+  blockedLower = new Set([...blockedPlayers].map(normalizeName));
 }
 
 // Returns true if this cell should be hidden by the player filter.
@@ -686,10 +695,10 @@ function isPlayerBlocked(cell) {
   if (blockedLower.size === 0) return false;
   if (reversePlayerFilter) {
     if (cell.n !== 1) return true;
-    return !cell.pl || !blockedLower.has(cell.pl.toLowerCase());
+    return !cell.pl || !blockedLower.has(normalizeName(cell.pl));
   }
   if (cell.n !== 1 || !cell.pl) return false;
-  return blockedLower.has(cell.pl.toLowerCase());
+  return blockedLower.has(normalizeName(cell.pl));
 }
 
 function getYearRange() {
