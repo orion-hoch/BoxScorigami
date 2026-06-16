@@ -18,7 +18,7 @@
     backdrop-filter: blur(6px); font-size: 13px; line-height: 1.45;
   }
   #info { top: 12px; left: 12px; min-width: 280px; max-width: 340px; }
-  #detail { top: 12px; right: 12px; min-width: 260px; max-width: 320px; display: none; }
+  #detail { top: 54px; right: 12px; min-width: 260px; max-width: 320px; display: none; }
   #leaders {
     bottom: 12px; right: 12px; max-width: 280px; max-height: 50vh; overflow: hidden;
     display: flex; flex-direction: column;
@@ -41,6 +41,18 @@
   #controls .sliderRow { display: grid; grid-template-columns: 78px 1fr 36px; align-items: center; gap: 8px; }
   #controls .sliderRow input[type="range"] { width: 100%; }
   #controls .sliderRow .num { font-variant-numeric: tabular-nums; color: #8b94a0; font-size: 11px; text-align: right; }
+  #controls .coarseRow { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 8px; }
+  #coarseToggle { display: flex; gap: 3px; }
+  #coarseToggle button {
+    flex: 1; background: #1b1f25; color: #8b94a0; border: 1px solid #3a4150;
+    padding: 3px 0; font-size: 11px; font-weight: 700; border-radius: 4px;
+    cursor: pointer; font-family: inherit;
+  }
+  #coarseToggle button:hover { color: #e6e8eb; }
+  #coarseToggle button.active { background: #2a2f36; color: #f7c948; border-color: #f7c948; }
+  /* 5×/6× coarseness only apply to MLB (its season totals span a far larger grid). */
+  #coarseToggle .mlb-only { display: none; }
+  body.sport-mlb #coarseToggle .mlb-only { display: block; }
   #controls select {
     background: #181b21; color: #e6e8eb; border: 2px solid #3a4150; border-radius: 4px;
     padding: 3px 6px; font-size: 12px; width: 100%;
@@ -99,6 +111,32 @@
   }
   #tabs button:hover { color: #e6e8eb; }
   #tabs button.active { background: #2a2f36; color: #f7c948; }
+  #topRightControls {
+    position: absolute; top: 12px; right: 12px;
+    display: flex; gap: 6px; align-items: flex-start; z-index: 10;
+  }
+  #modeToggle {
+    display: flex; gap: 4px;
+    background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
+    padding: 3px; backdrop-filter: blur(6px);
+  }
+  #modeToggle button {
+    background: transparent; color: #8b94a0; border: 0;
+    padding: 4px 16px; font-size: 12px; font-weight: 700;
+    border-radius: 5px; cursor: pointer; letter-spacing: .04em;
+    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+  }
+  #modeToggle button:hover { color: #e6e8eb; }
+  #modeToggle button.active { background: #2a2f36; color: #f7c948; }
+  #injuredToggle {
+    display: none;
+    background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
+    color: #8b94a0; padding: 7px 14px; font-size: 12px; font-weight: 700;
+    cursor: pointer; letter-spacing: .04em; backdrop-filter: blur(6px);
+    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+  }
+  #injuredToggle:hover { color: #e6e8eb; }
+  #injuredToggle.active { color: #f7c948; border-color: #f7c948; }
 
   .panel-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -165,6 +203,14 @@
 <div id="tabs">
   <button data-sport="nba">NBA</button>
   <button data-sport="nfl">NFL</button>
+  <button data-sport="mlb">MLB</button>
+</div>
+<div id="topRightControls">
+  <button id="injuredToggle">Injured seasons: off</button>
+  <div id="modeToggle">
+    <button data-mode="game" class="active">Per-Game</button>
+    <button data-mode="season">Season</button>
+  </div>
 </div>
 
 <div id="info" class="panel">
@@ -197,6 +243,17 @@
     </div>
     <label><input type="checkbox" id="showAxes" checked /> Show Axes</label>
     <label><input type="checkbox" id="showLabels" checked /> Show Labels</label>
+    <div class="coarseRow">
+      <span>Coarseness<span class="info-icon" data-tip="Merge each k×k×k block of stat lines into one voxel, summing their tallies. Coarsens granular season data so true outliers stand out.">?</span></span>
+      <div id="coarseToggle">
+        <button data-k="1" class="active">1×</button>
+        <button data-k="2">2×</button>
+        <button data-k="3">3×</button>
+        <button data-k="4">4×</button>
+        <button data-k="5" class="mlb-only">5×</button>
+        <button data-k="6" class="mlb-only">6×</button>
+      </div>
+    </div>
   </div>
 
   <div class="subpanel" id="yearFilterBox">
@@ -414,6 +471,53 @@ function setHover(mesh, id) {
   mesh.instanceColor.needsUpdate = true;
 }
 
+// Coarseness: bin the cube into k×k×k blocks, summing the tally of every line
+// in a block into one voxel. Lets too-granular season data collapse so true
+// outliers (lone voxels) stand out. rawData holds the untouched 1× payload so
+// changing k just re-bins client-side — no refetch.
+let COARSE = 1;
+let rawData = null;
+
+function repBetter(c, cur) {
+  // Pick the most substantial line in a block as the voxel's example: most
+  // games, then most occurrences, then most recent.
+  if (!cur) return true;
+  const cg = c.gp || 0, rg = cur.gp || 0;
+  if (cg !== rg) return cg > rg;
+  if (c.n !== cur.n) return c.n > cur.n;
+  return (c.d || '') > (cur.d || '');
+}
+
+function coarsenData(data, k) {
+  if (!data || k <= 1) return data;
+  const bins = new Map();
+  for (const c of data.cells) {
+    const bp = Math.floor(c.p / k), br = Math.floor(c.r / k), ba = Math.floor(c.a / k);
+    const key = `${bp},${br},${ba}`;
+    let b = bins.get(key);
+    if (!b) { b = { p: bp, r: br, a: ba, n: 0, rep: null }; bins.set(key, b); }
+    b.n += c.n;
+    if (repBetter(c, b.rep)) b.rep = c;
+  }
+  const cells = [];
+  for (const b of bins.values()) {
+    const r = b.rep;
+    cells.push({ p: b.p, r: b.r, a: b.a, n: b.n,
+                 d: r.d, pl: r.pl, t: r.t, m: r.m, g: r.g, gp: r.gp, pid: r.pid });
+  }
+  const scaleAxis = (ax) => ({ ...ax, max: Math.floor(ax.max / k) });
+  return {
+    axes: { x: scaleAxis(data.axes.x), y: scaleAxis(data.axes.y), z: scaleAxis(data.axes.z) },
+    cells,
+    leaderboard: data.leaderboard,
+  };
+}
+
+function renderCube() {
+  if (!rawData) return;
+  buildCube(coarsenData(rawData, COARSE));
+}
+
 function buildCube(data) {
   clearCube();
 
@@ -598,6 +702,11 @@ function pick(event) {
 
 function fmtAxis(c) {
   const a = state.axes;
+  // When coarsened, p/r/a are bin indices — show the stat range each covers.
+  if (COARSE > 1) {
+    const rng = v => `${v * COARSE}–${v * COARSE + COARSE - 1}`;
+    return `${rng(c.p)} ${a.x.label.toLowerCase()} · ${rng(c.r)} ${a.y.label.toLowerCase()} · ${rng(c.a)} ${a.z.label.toLowerCase()}`;
+  }
   return `${c.p} ${a.x.label.toLowerCase()} · ${c.r} ${a.y.label.toLowerCase()} · ${c.a} ${a.z.label.toLowerCase()}`;
 }
 
@@ -611,13 +720,26 @@ function showDetailForCell(c) {
   const linkHtml = url
     ? `<a href="${url}" target="_blank" rel="noopener" style="color:#f7c948">${linkLabel} ↗</a>`
     : (c.g || '—');
+  const seasonMode = MODE === 'season';
+  // Season cells are a player-season, not a single game — drop the matchup/
+  // box-score rows. The example shown is that line's top season (most games).
+  const gamesRow = typeof c.gp === 'number'
+    ? `<div class="row"><span class="k">Games</span><span class="v">${c.gp}</span></div>`
+    : '';
+  const detailRows = seasonMode ? `
+    <div class="row"><span class="k">Season</span><span class="v">${c.d || '—'}</span></div>
+    <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c)}</span></div>
+    ${gamesRow}
+  ` : `
+    <div class="row"><span class="k">Most Recent</span><span class="v">${c.d || '—'}</span></div>
+    <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c, c.t ? ' (' + c.t + ')' : '')}</span></div>
+    <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '—'}</span></div>
+    <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
+  `;
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis(c)}</div>
     <div class="row"><span class="k">Tally</span><span class="v">${c.n.toLocaleString()}</span></div>
-    <div class="row"><span class="k">Most Recent</span><span class="v">${c.d || '—'}</span></div>
-    <div class="row"><span class="k">Player</span><span class="v">${c.pl || 'Unknown'} ${c.t ? '(' + c.t + ')' : ''}</span></div>
-    <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '—'}</span></div>
-    <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
+    ${detailRows}
   `;
 }
 function showDetailForEnclosed(p, r, a) {
@@ -730,7 +852,7 @@ function applyVisibilityFilters() {
       if (yr.max !== null && yyyy > yr.max) yearBlocked = true;
     }
     const blocked = (hideScor && c.n === 1) || (hideRep && c.n >= 2) ||
-                    playerBlocked || yearBlocked;
+                    playerBlocked || yearBlocked || isGamesBlocked(c);
     if (blocked) {
       mesh.setMatrixAt(i, HIDE_MATRIX);
     } else {
@@ -757,6 +879,7 @@ function recomputeLeaderboard() {
       if (yr.max !== null && yyyy > yr.max) continue;
     }
     if (isPlayerBlocked(c)) continue;
+    if (isGamesBlocked(c)) continue;
     counts.set(c.pl, (counts.get(c.pl) || 0) + 1);
   }
   const sorted = [...counts.entries()]
@@ -938,6 +1061,32 @@ const NFL_TO_PFR_TEAM = {
   STL: 'ram', SD: 'sdg', OAK: 'rai',
 };
 
+// Player page for the cell's representative (most-recent / unique) player,
+// keyed by the player_id baked into each cell. NBA/MLB ids map to clean URLs;
+// NFL ids are nflverse GSIS ids with no public page, so it returns null.
+function playerUrl(cell) {
+  if (!cell || cell.pid == null) return null;
+  if (SPORT === 'nba') return `https://www.nba.com/player/${cell.pid}`;
+  if (SPORT === 'mlb') return `https://www.mlb.com/player/${cell.pid}`;
+  if (SPORT === 'nfl') {
+    // Historical rows carry PFR ids (e.g. "SchaEl20") -> PFR player page.
+    // Modern nflverse rows carry GSIS ids ("00-0033873") with no public page.
+    const id = String(cell.pid);
+    if (/^[A-Za-z]/.test(id) && !id.includes('-')) {
+      return `https://www.pro-football-reference.com/players/${id[0].toUpperCase()}/${id}.htm`;
+    }
+  }
+  return null;
+}
+
+function playerHtml(cell, suffix) {
+  const name = (cell.pl || 'Unknown') + (suffix || '');
+  const url = playerUrl(cell);
+  return url
+    ? `<a href="${url}" target="_blank" rel="noopener" style="color:#e6e8eb">${name} ↗</a>`
+    : name;
+}
+
 function boxscoreUrl(cell) {
   if (!cell || !cell.d) return null;
   const ymd = cell.d.replaceAll('-', '');
@@ -972,6 +1121,20 @@ function boxscoreUrl(cell) {
   return null;
 }
 let SPORT = 'nba';
+// 'game' = per-game box scores, 'season' = player-season view.
+// Switches which tally folder loadTally() fetches from.
+let MODE = 'game';
+// Season mode (NBA/NFL): when false, hide "injured" seasons whose games played
+// fall below the sport's threshold. MLB season totals have no games filter.
+let INJURED = false;
+const INJURED_MIN = { nba: 20, nfl: 6 };
+
+// True if this season cell should be hidden by the injured-seasons filter.
+function isGamesBlocked(c) {
+  if (MODE !== 'season' || INJURED) return false;
+  const min = INJURED_MIN[SPORT];
+  return min != null && typeof c.gp === 'number' && c.gp < min;
+}
 const STATS_META = {};
 
 async function loadStats() {
@@ -986,7 +1149,8 @@ async function loadStats() {
 
 async function loadTally(x, y, z) {
   const fileKeys = [x, y, z].slice().sort();
-  const url = `${SPORT}/tally/${fileKeys.join('_')}.json`;
+  const dir = MODE === 'season' ? 'tally-season' : 'tally';
+  const url = `${SPORT}/${dir}/${fileKeys.join('_')}.json`;
   statusEl.textContent = `loading ${x}/${y}/${z}...`;
   const r = await fetch(url);
   if (!r.ok) {
@@ -1016,7 +1180,7 @@ async function loadTally(x, y, z) {
     const v = [c.p, c.r, c.a];
     return {
       p: v[map[0]], r: v[map[1]], a: v[map[2]],
-      n: c.n, d: c.d, pl: c.pl, t: c.t, m: c.m, g: c.g,
+      n: c.n, d: c.d, pl: c.pl, t: c.t, m: c.m, g: c.g, gp: c.gp, pid: c.pid,
     };
   });
 
@@ -1051,7 +1215,8 @@ async function refresh() {
   }
   try {
     const data = await loadTally(x, y, z);
-    buildCube(data);
+    rawData = data;            // keep the 1× cells so coarseness can re-bin without refetch
+    renderCube();
     // Leaderboard is now computed client-side from state.instanceIndex so
     // year/player filters stay in sync. buildCube() already triggered
     // recomputeLeaderboard() via applyVisibilityFilters().
@@ -1098,6 +1263,18 @@ async function loadSport(sport) {
   document.getElementById('cubeTitle').textContent = SPORTS[sport].title;
   document.title = 'BoxScorigami';
   location.hash = `sport=${sport}`;
+  // The 5×/6× coarseness buttons are MLB-only (CSS keys off this class).
+  document.body.classList.toggle('sport-mlb', sport === 'mlb');
+  // Reset the per-game/season toggle, injured filter, and coarseness on switch.
+  MODE = 'game';
+  INJURED = false;
+  COARSE = 1;
+  const modeToggle = document.getElementById('modeToggle');
+  modeToggle.querySelectorAll('button').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === 'game'));
+  document.querySelectorAll('#coarseToggle button').forEach(x =>
+    x.classList.toggle('active', x.dataset.k === '1'));
+  updateInjuredToggle();
   // Player names are sport-specific — clear any prior chips on switch.
   blockedPlayers.clear();
   refreshBlockedLower();
@@ -1123,6 +1300,48 @@ async function loadSport(sport) {
 
 document.querySelectorAll('#tabs button').forEach(b => {
   b.addEventListener('click', () => loadSport(b.dataset.sport));
+});
+
+// The injured-seasons toggle only applies in season mode for sports with a
+// threshold (NBA/NFL); hide it otherwise and reflect current on/off state.
+function updateInjuredToggle() {
+  const btn = document.getElementById('injuredToggle');
+  const show = MODE === 'season' && INJURED_MIN[SPORT] != null;
+  btn.style.display = show ? 'block' : 'none';
+  btn.classList.toggle('active', INJURED);
+  btn.textContent = `Injured seasons: ${INJURED ? 'on' : 'off'}`;
+}
+
+document.querySelectorAll('#modeToggle button').forEach(b => {
+  b.addEventListener('click', () => {
+    if (MODE === b.dataset.mode) return;
+    MODE = b.dataset.mode;
+    document.querySelectorAll('#modeToggle button').forEach(x =>
+      x.classList.toggle('active', x.dataset.mode === MODE));
+    updateInjuredToggle();
+    refresh();
+  });
+});
+
+// Injured filter toggles client-side — gp is already in the loaded cells, so
+// just re-apply visibility (no refetch).
+document.getElementById('injuredToggle').addEventListener('click', () => {
+  INJURED = !INJURED;
+  updateInjuredToggle();
+  applyVisibilityFilters();
+});
+
+// Coarseness re-bins the cached rawData and rebuilds — no refetch.
+document.querySelectorAll('#coarseToggle button').forEach(b => {
+  b.addEventListener('click', () => {
+    const k = parseInt(b.dataset.k, 10);
+    if (k === COARSE) return;
+    COARSE = k;
+    document.querySelectorAll('#coarseToggle button').forEach(x =>
+      x.classList.toggle('active', parseInt(x.dataset.k, 10) === COARSE));
+    detailEl.style.display = 'none';   // a selected voxel no longer exists post-rebin
+    renderCube();
+  });
 });
 
 (async () => {

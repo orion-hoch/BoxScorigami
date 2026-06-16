@@ -1,30 +1,19 @@
-# Local data — too big for git, regenerate via the collect scripts
-scorigami/scorigami.sqlite
-scorigami/scorigami.sqlite-journal
-scorigami/scorigami.sqlite-wal
-scorigami/scorigami.sqlite-shm
-nfl/nfl.sqlite
-nfl/nfl.sqlite-journal
-nfl/nfl.sqlite-wal
-nfl/nfl.sqlite-shm
-nfl_full/nfl_full.sqlite
-nfl_full/nfl_full.sqlite-journal
-nfl_full/nfl_full.sqlite-wal
-nfl_full/nfl_full.sqlite-shm
+# Local data — SQLite DBs are too big for git; regenerate via the collect scripts.
+# Blanket rule so no sport's db (or a renamed/new one) can ever be committed.
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
-# 1.6GB Chromium profile from the PFR scrape (cached cookies, no source value)
-nfl_full/.browser_profile/
+# Chromium profile from the PFR scrape (cached cookies, no source value)
+.browser_profile/
 
 # Legacy per-sport publish folders — deploy now serves /public/ at the repo root
-scorigami/public/
+nba/public/
 nfl/public/
 
 # Vendored nba_api repo — install via pip instead if you need it locally
 nba_api/
-
-# Old single-combo export artifact, superseded by scorigami/public/tally/
-scorigami/pra_cube.json
-scorigami/pra_tally.csv
 
 # Python
 __pycache__/

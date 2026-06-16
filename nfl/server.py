@@ -1,6 +1,6 @@
 """Tiny stdlib HTTP server: static files + live tally endpoint for NFL.
 
-GET /                          -> cube.html
+GET /                          -> JSON describing this dev API (viewer lives in /public)
 GET /<file>                    -> static file from this directory
 GET /stats                     -> JSON list of valid stat axes
 GET /tally?x=pass_yds&y=pass_td&z=rush_yds  -> tally cells + leaderboard
@@ -9,7 +9,7 @@ Run:
     python3 nfl/server.py [--port 8766]
 
 The server queries nfl.sqlite directly with window functions so any
-3-stat combo is computed on demand. Mirror of scorigami/server.py.
+3-stat combo is computed on demand. Mirror of nba/server.py.
 """
 import argparse
 import json
@@ -23,8 +23,8 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "nfl.sqlite"
 # Historical PFR-scraped DB (1933-1998). Optional — if present, it's merged
-# into a unified `player_games` view via ATTACH. Built by nfl_full/collect.py.
-HIST_DB_PATH = HERE.parent / "nfl_full" / "nfl_full.sqlite"
+# into a unified `player_games` view via ATTACH. Built by collect_historical.py.
+HIST_DB_PATH = HERE / "nfl_full.sqlite"
 
 # Allow-list of stat columns we expose. Keys are the URL/file identifiers,
 # col is the SQLite column, label is what the UI shows.
@@ -127,7 +127,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
         ),
         latest AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z,
-                   game_id, player_name, team_abbr, matchup, game_date,
+                   game_id, player_uid, player_name, team_abbr, matchup, game_date,
                    ROW_NUMBER() OVER (
                        PARTITION BY {cx}, {cy}, {cz}
                        ORDER BY game_date DESC, game_id DESC
@@ -136,7 +136,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
             WHERE {raw_cx} IS NOT NULL AND {raw_cy} IS NOT NULL AND {raw_cz} IS NOT NULL
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,
-               l.player_name, l.team_abbr, l.matchup, l.game_id
+               l.player_uid, l.player_name, l.team_abbr, l.matchup, l.game_id
         FROM counts c
         JOIN latest l
           ON l.x = c.x AND l.y = c.y AND l.z = c.z AND l.rn = 1
@@ -148,6 +148,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
             "p": r["x"], "r": r["y"], "a": r["z"], "n": r["n"],
             "d": r["last_date"], "pl": r["player_name"],
             "t": r["team_abbr"], "m": r["matchup"], "g": r["game_id"],
+            "pid": r["player_uid"],
         }
         for r in rows
     ]
@@ -236,8 +237,15 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send_error_json(500, f"db error: {e}")
             self._send_json(payload)
             return
+        # No HTML viewer here — the unified site lives in /public. This dev
+        # server only exposes the live JSON API.
         if url.path in ("/", ""):
-            self.path = "/cube.html"
+            self._send_json(json.dumps({
+                "service": "nfl scorigami dev API",
+                "endpoints": ["/stats", "/tally?x=rec_yds&y=rec&z=rec_td"],
+                "viewer": "serve the repo's /public/ folder and open index.html",
+            }))
+            return
         return super().do_GET()
 
     def log_message(self, fmt, *args):

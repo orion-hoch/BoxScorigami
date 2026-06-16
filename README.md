@@ -1,47 +1,54 @@
 # BoxScorigami
 
-Interactive 3D visualization of every NBA player-game stat-line in history.
-Pick any 3 of 13 stats for the X/Y/Z axes, rotate, peel layers, click voxels
-for the most recent game that produced that exact stat line, and inspect the
-leaderboard of players who own the most unique combos.
+Interactive 3D visualization of player-game stat lines across the NBA, NFL,
+and MLB. Pick any 3 stats for the X/Y/Z axes, rotate, peel layers, and click a
+voxel to see the most recent game (or player-season) that produced that exact
+line, plus a leaderboard of who owns the most unique combos.
 
-Data covers every regular-season and playoff game from 1950-51 through the
-current season (~1.35M player-game rows) via [nba_api](https://github.com/swar/nba_api).
-
-The deployed site is a fully static bundle living in `scorigami/public/` —
-no backend at runtime. All 286 axis combos are precomputed into JSON.
+The deployed site is a fully static bundle in `public/` — no backend at
+runtime. Every axis combo is precomputed to JSON per sport; the viewer just
+fetches `public/<sport>/tally/*.json`.
 
 ## Repo layout
 
 ```
 NBA_Cube/
-├── scorigami/
-│   ├── public/             # deploy target — what Vercel serves
-│   │   ├── index.html
-│   │   ├── stats.json
-│   │   └── tally/          # 286 combo JSON files
-│   ├── collect.py          # fetch player_games via nba_api -> SQLite
-│   ├── server.py           # local dev server (optional)
-│   ├── tally.py            # legacy single-combo tally builder
-│   ├── export_static.py    # generate scorigami/public/ from SQLite
-│   └── scorigami.sqlite    # gitignored — 229 MB
-├── nba_api/                # gitignored — clone of swar/nba_api
+├── public/                 # deploy target — unified static site (Vercel serves this)
+│   ├── index.html          #   the tabbed 3D viewer (NBA / NFL / MLB)
+│   ├── boxscorigami.svg
+│   ├── nba/                #   stats.json, tally/ (per-game), tally-season/
+│   ├── nfl/                #   "
+│   └── mlb/                #   "
+├── nba/                    # NBA pipeline (nba_api)
+│   ├── collect.py          #   fetch player_games -> nba.sqlite
+│   ├── export_static.py    #   generate public/nba/ from the db
+│   ├── server.py           #   local dev JSON API (optional)
+│   └── nba.sqlite          #   gitignored
+├── nfl/                    # NFL pipeline -> nfl.sqlite, public/nfl/
+│   ├── collect.py          #   modern era (nflverse)
+│   ├── collect_historical.py  # 1933-1998 (Pro-Football-Reference) -> nfl_full.sqlite
+│   └── server.py           #   ATTACHes nfl_full.sqlite for the full history
+├── mlb/                    # MLB pipeline (MLB-StatsAPI) -> mlb.sqlite, public/mlb/
 └── .gitignore
 ```
 
-## Local dev
+Each sport follows the same shape: `collect.py` scrapes into a SQLite db,
+`export_static.py` precomputes every combo into `public/<sport>/`. SQLite files
+are gitignored (too big — regenerate from the collect scripts).
+
+## Local dev (per sport, e.g. nba)
 
 ```
-# 1. (one-time) Fetch all seasons into SQLite (~3 min)
-python3 scorigami/collect.py
+# 1. (one-time) Scrape into SQLite
+python3 nba/collect.py
 
-# 2. (one-time, or whenever SQLite changes) Generate static combos
-python3 scorigami/export_static.py
+# 2. (whenever the db changes) Generate the static combos
+python3 nba/export_static.py
 
-# 3. Serve the deploy folder
-python3 -m http.server --directory scorigami/public 8765
-# -> http://127.0.0.1:8765/
+# 3. Serve the unified site from the repo root
+python3 -m http.server --directory public 8000
+# -> http://127.0.0.1:8000/
 ```
 
-`scorigami/server.py` is kept around but no longer required — the deployed
-viewer reads only from `tally/*.json` and `stats.json`.
+The per-sport `server.py` scripts query the db live and are handy for spot
+checks, but the deployed viewer reads only the precomputed JSON.

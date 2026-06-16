@@ -1,6 +1,6 @@
 """Tiny stdlib HTTP server: static files + live tally endpoint for MLB batting.
 
-GET /                          -> cube.html (if you serve from this dir)
+GET /                          -> static files (the viewer lives in /public)
 GET /stats                     -> JSON list of valid stat axes
 GET /tally?x=ab&y=h&z=hr        -> tally cells + leaderboard
 
@@ -68,7 +68,7 @@ def compute_payload(x, y, z) -> str:
         ),
         latest AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z,
-                   game_id, player_name, team_abbr, matchup, game_date,
+                   game_id, player_id, player_name, team_abbr, matchup, game_date,
                    ROW_NUMBER() OVER (
                        PARTITION BY {cx}, {cy}, {cz}
                        ORDER BY game_date DESC, game_id DESC
@@ -77,7 +77,7 @@ def compute_payload(x, y, z) -> str:
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,
-               l.player_name, l.team_abbr, l.matchup, l.game_id
+               l.player_id, l.player_name, l.team_abbr, l.matchup, l.game_id
         FROM counts c
         JOIN latest l
           ON l.x = c.x AND l.y = c.y AND l.z = c.z AND l.rn = 1
@@ -87,7 +87,8 @@ def compute_payload(x, y, z) -> str:
     cells = [
         {"p": r["x"], "r": r["y"], "a": r["z"], "n": r["n"],
          "d": r["last_date"], "pl": r["player_name"], "t": r["team_abbr"],
-         "m": r["matchup"], "g": str(r["game_id"]) if r["game_id"] is not None else None}
+         "m": r["matchup"], "g": str(r["game_id"]) if r["game_id"] is not None else None,
+         "pid": r["player_id"]}
         for r in rows
     ]
     if cells:
