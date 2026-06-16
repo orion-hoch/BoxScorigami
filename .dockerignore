@@ -1,0 +1,5 @@
+# The image only needs the static site + Caddyfile. Keep the build context
+# tiny by ignoring everything else (Python pipelines, data, etc.).
+*
+!public
+!Caddyfile
