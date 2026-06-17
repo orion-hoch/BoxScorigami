@@ -87,22 +87,34 @@ def compute_payload(x: str, y: str, z: str) -> str:
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,
-               l.player_id, l.player_name, l.team_abbr, l.matchup, l.game_id
+               l.player_id, l.player_name, l.team_abbr, l.matchup, l.game_id,
+               l.game_date, l.rn
         FROM counts c
         JOIN latest l
-          ON l.x = c.x AND l.y = c.y AND l.z = c.z AND l.rn = 1
+          ON l.x = c.x AND l.y = c.y AND l.z = c.z AND l.rn <= 5
+        ORDER BY c.x, c.y, c.z, l.rn
         """
     ).fetchall()
 
-    cells = [
-        {
-            "p": r["x"], "r": r["y"], "a": r["z"], "n": r["n"],
-            "d": r["last_date"], "pl": r["player_name"],
-            "t": r["team_abbr"], "m": r["matchup"], "g": r["game_id"],
-            "pid": r["player_id"],
-        }
-        for r in rows
-    ]
+    # Rows arrive grouped by cell (ORDER BY x,y,z,rn). The rn=1 row is the
+    # headline occurrence (keeps existing fields/filters intact); repeated cells
+    # (n>=2) also get the full up-to-5 list as `recent` for the detail panel.
+    cells = []
+    cur = None
+    for r in rows:
+        if cur is None or (r["x"], r["y"], r["z"]) != (cur["p"], cur["r"], cur["a"]):
+            cur = {
+                "p": r["x"], "r": r["y"], "a": r["z"], "n": r["n"],
+                "d": r["last_date"], "pl": r["player_name"],
+                "t": r["team_abbr"], "m": r["matchup"], "g": r["game_id"],
+                "pid": r["player_id"],
+            }
+            cells.append(cur)
+        if r["n"] >= 2:
+            cur.setdefault("recent", []).append({
+                "pl": r["player_name"], "d": r["game_date"], "t": r["team_abbr"],
+                "m": r["matchup"], "g": r["game_id"], "pid": r["player_id"],
+            })
 
     # Bounding box from the actual data
     if cells:

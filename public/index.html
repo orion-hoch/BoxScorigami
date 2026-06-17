@@ -81,6 +81,24 @@
   #detail .pra { font-size: 16px; font-weight: 600; color: #f7c948; margin-bottom: 6px; }
   #detail .empty { color: #8b94a0; font-style: italic; }
 
+  /* Collapsible "Last N" bubble beneath the Box Score row. */
+  #detail .recent-box { margin-top: 10px; padding-top: 8px;
+                        border-top: 1px solid rgba(255,255,255,.08); }
+  #detail .recent-header { display: flex; align-items: center; justify-content: space-between; }
+  #detail .recent-header .rt { color: #8b94a0; text-transform: uppercase;
+                               letter-spacing: .06em; font-size: 11px; }
+  #detail .recent-list { margin-top: 6px; max-height: 200px; overflow-y: auto; padding-right: 4px; }
+  #detail .recent-list::-webkit-scrollbar { width: 6px; }
+  #detail .recent-list::-webkit-scrollbar-thumb { background: #3a4150; border-radius: 3px; }
+  #detail .recentRow {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 10px;
+    padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+    align-items: baseline; font-size: 12px;
+  }
+  #detail .recentRow .nm { color: #e6e8eb; }
+  #detail .recentRow .dt { color: #8b94a0; font-variant-numeric: tabular-nums; }
+  #detail .recentRow .ln a { color: #f7c948; }
+
   #lbList { overflow-y: auto; flex: 1 1 auto; margin-top: 4px; padding-right: 4px; }
   #lbList::-webkit-scrollbar { width: 6px; }
   #lbList::-webkit-scrollbar-thumb { background: #3a4150; border-radius: 3px; }
@@ -206,9 +224,9 @@
   <button data-sport="mlb">MLB</button>
 </div>
 <div id="topRightControls">
-  <button id="injuredToggle">Injured seasons: off</button>
+  <button id="injuredToggle">Min Games: on</button>
   <div id="modeToggle">
-    <button data-mode="game" class="active">Per-Game</button>
+    <button data-mode="game" class="active">Single Game</button>
     <button data-mode="season">Season</button>
   </div>
 </div>
@@ -421,6 +439,9 @@ const state = {
   enclosedIndex: [],
   occupied: null,
   MAX_X: 0, MAX_Y: 0, MAX_Z: 0,
+  // Render origin offset: the least value on each axis (min(0, dataMin)), so
+  // negative stats render below zero instead of being clamped to the corner.
+  base: { x: 0, y: 0, z: 0 },
   axes: null,
 };
 
@@ -502,8 +523,11 @@ function coarsenData(data, k) {
   const cells = [];
   for (const b of bins.values()) {
     const r = b.rep;
+    // sp/sr/sa keep the representative line's true (un-binned) stat values so
+    // the detail panel can show the exact statline behind a coarsened voxel.
     cells.push({ p: b.p, r: b.r, a: b.a, n: b.n,
-                 d: r.d, pl: r.pl, t: r.t, m: r.m, g: r.g, gp: r.gp, pid: r.pid });
+                 d: r.d, pl: r.pl, t: r.t, m: r.m, g: r.g, gp: r.gp, pid: r.pid,
+                 sp: r.p, sr: r.r, sa: r.a, recent: r.recent });
   }
   const scaleAxis = (ax) => ({ ...ax, max: Math.floor(ax.max / k) });
   return {
@@ -523,15 +547,29 @@ function buildCube(data) {
 
   const axes = data.axes;
   state.axes = axes;
-  const MAX_X = axes.x.max, MAX_Y = axes.y.max, MAX_Z = axes.z.max;
+
+  // Anchor the origin at the least value on each axis so negative stats (e.g.
+  // NFL per-game rushing/receiving averages) render below the corner instead of
+  // being clamped there. base = min(0, dataMin), so all-positive cubes keep
+  // their familiar 0,0,0 origin and only negatives push it down.
+  let minP = 0, minR = 0, minA = 0;
+  for (const c of data.cells) {
+    if (c.p < minP) minP = c.p;
+    if (c.r < minR) minR = c.r;
+    if (c.a < minA) minA = c.a;
+  }
+  const base = { x: minP, y: minR, z: minA };
+  state.base = base;
+  // MAX_* are render-space spans (value range), measured from the new origin.
+  const MAX_X = axes.x.max - base.x, MAX_Y = axes.y.max - base.y, MAX_Z = axes.z.max - base.z;
   state.MAX_X = MAX_X; state.MAX_Y = MAX_Y; state.MAX_Z = MAX_Z;
 
-  // Sort occupied cells ascending by Euclidean distance from origin so the
+  // Sort occupied cells ascending by Euclidean distance from the origin so the
   // peel slider can just truncate mesh.count to hide outer layers.
   const cells = data.cells.slice().sort((c1, c2) => {
-    const d1 = c1.p*c1.p + c1.r*c1.r + c1.a*c1.a;
-    const d2 = c2.p*c2.p + c2.r*c2.r + c2.a*c2.a;
-    return d1 - d2;
+    const o1p = c1.p - base.x, o1r = c1.r - base.y, o1a = c1.a - base.z;
+    const o2p = c2.p - base.x, o2r = c2.r - base.y, o2a = c2.a - base.z;
+    return (o1p*o1p + o1r*o1r + o1a*o1a) - (o2p*o2p + o2r*o2r + o2a*o2a);
   });
 
   const occupied = new Map();
@@ -550,7 +588,7 @@ function buildCube(data) {
   const instanceIndex = [];
   for (let i = 0; i < cells.length; i++) {
     const c = cells[i];
-    dummy.position.set(c.p, c.r, c.a);
+    dummy.position.set(c.p - base.x, c.r - base.y, c.a - base.z);
     dummy.updateMatrix();
     occMesh.setMatrixAt(i, dummy.matrix);
     occMesh.setColorAt(i, bucketColor(c.n));
@@ -604,7 +642,7 @@ function buildCube(data) {
   labelX.position.set(MAX_X + pad + labelOffset, -pad, -pad);
   labelY.position.set(-pad, MAX_Y + pad + labelOffset, -pad);
   labelZ.position.set(-pad, -pad, MAX_Z + pad + labelOffset);
-  const labelOrigin = makeLabel('0,0,0', '#8b94a0', labelHeight * 0.6);
+  const labelOrigin = makeLabel(`${base.x},${base.y},${base.z}`, '#8b94a0', labelHeight * 0.6);
   labelOrigin.position.set(-pad - labelOffset * 0.5, -pad - labelOffset * 0.5, -pad - labelOffset * 0.5);
   labelsGroup.add(labelX, labelY, labelZ, labelOrigin);
   cubeGroup.add(axesGroup);
@@ -632,18 +670,20 @@ function buildCube(data) {
 
   applyPeel();
 
-  statusEl.textContent =
-    `Made by Orion Hoch · BBox = ${MAX_X}×${MAX_Y}×${MAX_Z}`;
+  statusEl.innerHTML =
+    `Made by <a href="https://github.com/orion-hoch/BoxScorigami" target="_blank" rel="noopener" style="color:#f7c948">Orion Hoch</a> · BBox = ${MAX_X}×${MAX_Y}×${MAX_Z}`;
 }
 
 function buildEnclosedMesh() {
   if (state.enclosedMesh || !state.occupied) return;
-  const { MAX_X, MAX_Y, MAX_Z, occupied } = state;
+  const { MAX_X, MAX_Y, MAX_Z, base, occupied } = state;
 
+  // occupied is keyed by raw stat values, so iterate the raw coordinate range
+  // (base .. base+span) and render each hit at the base-relative offset.
   const positions = [];
-  for (let p = 0; p <= MAX_X; p++) {
-    for (let r = 0; r <= MAX_Y; r++) {
-      for (let a = 0; a <= MAX_Z; a++) {
+  for (let p = base.x; p <= base.x + MAX_X; p++) {
+    for (let r = base.y; r <= base.y + MAX_Y; r++) {
+      for (let a = base.z; a <= base.z + MAX_Z; a++) {
         if (occupied.has(`${p},${r},${a}`)) continue;
         let allOccupied = true;
         for (const [dp, dr, da] of NEIGHBOR_OFFSETS_6) {
@@ -658,11 +698,12 @@ function buildEnclosedMesh() {
   }
   if (positions.length === 0) return;
 
-  // Match peel ordering used by occ/zero meshes.
-  positions.sort((q1, q2) =>
-    (q1[0]*q1[0] + q1[1]*q1[1] + q1[2]*q1[2]) -
-    (q2[0]*q2[0] + q2[1]*q2[1] + q2[2]*q2[2])
-  );
+  // Match peel ordering (distance from origin) used by the occupied mesh.
+  positions.sort((q1, q2) => {
+    const o1p = q1[0]-base.x, o1r = q1[1]-base.y, o1a = q1[2]-base.z;
+    const o2p = q2[0]-base.x, o2r = q2[1]-base.y, o2a = q2[2]-base.z;
+    return (o1p*o1p + o1r*o1r + o1a*o1a) - (o2p*o2p + o2r*o2r + o2a*o2a);
+  });
 
   const geom = new THREE.BoxGeometry(0.9, 0.9, 0.9);
   const mat = new THREE.MeshLambertMaterial({ color: COLOR_ENCLOSED });
@@ -673,7 +714,7 @@ function buildEnclosedMesh() {
   const idx = [];
   for (let i = 0; i < positions.length; i++) {
     const [p, r, a] = positions[i];
-    dummy.position.set(p, r, a);
+    dummy.position.set(p - base.x, r - base.y, a - base.z);
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
     idx.push({ p, r, a });
@@ -721,6 +762,12 @@ function showDetailForCell(c) {
     ? `<a href="${url}" target="_blank" rel="noopener" style="color:#f7c948">${linkLabel} ↗</a>`
     : (c.g || '—');
   const seasonMode = MODE === 'season';
+  // When coarsened, the voxel spans a k×k×k block of statlines; show the exact
+  // line behind the displayed example (sp/sr/sa carried by coarsenData).
+  const ax = state.axes;
+  const statlineRow = (COARSE > 1 && typeof c.sp === 'number')
+    ? `<div class="row"><span class="k">Statline</span><span class="v">${c.sp} ${ax.x.label.toLowerCase()} · ${c.sr} ${ax.y.label.toLowerCase()} · ${c.sa} ${ax.z.label.toLowerCase()}</span></div>`
+    : '';
   // Season cells are a player-season, not a single game — drop the matchup/
   // box-score rows. The example shown is that line's top season (most games).
   const gamesRow = typeof c.gp === 'number'
@@ -728,19 +775,55 @@ function showDetailForCell(c) {
     : '';
   const detailRows = seasonMode ? `
     <div class="row"><span class="k">Season</span><span class="v">${c.d || '—'}</span></div>
+    ${statlineRow}
     <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c)}</span></div>
     ${gamesRow}
   ` : `
     <div class="row"><span class="k">Most Recent</span><span class="v">${c.d || '—'}</span></div>
+    ${statlineRow}
     <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c, c.t ? ' (' + c.t + ')' : '')}</span></div>
     <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '—'}</span></div>
     <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
+  // Repeated cells (n>=2) carry up to 5 most-recent occurrences, shown in a
+  // collapsible "Last N" bubble beneath the headline (collapsed by default).
+  const hasRecent = Array.isArray(c.recent) && c.recent.length > 1;
+  const recentBox = hasRecent ? `
+    <div class="recent-box">
+      <div class="recent-header">
+        <span class="rt">Last ${c.recent.length}</span>
+        <button class="panel-btn" id="recentToggle" title="expand">+</button>
+      </div>
+      <div id="recentList" class="recent-list" style="display:none">${recentRows(c.recent, seasonMode)}</div>
+    </div>
+  ` : '';
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis(c)}</div>
     <div class="row"><span class="k">Tally</span><span class="v">${c.n.toLocaleString()}</span></div>
     ${detailRows}
+    ${recentBox}
   `;
+  // detailBody innerHTML is rebuilt each click, so bind the toggle fresh.
+  const rt = document.getElementById('recentToggle');
+  if (rt) rt.addEventListener('click', () => {
+    const list = document.getElementById('recentList');
+    const open = list.style.display === 'none';
+    list.style.display = open ? 'block' : 'none';
+    rt.textContent = open ? '−' : '+';
+    rt.title = open ? 'collapse' : 'expand';
+  });
+}
+
+// Renders the up-to-N most-recent occurrences: player name, date, and a [link]
+// to that game's box score (Single Game) or the player's page (Season).
+function recentRows(recent, seasonMode) {
+  return recent.map(e => {
+    const url = seasonMode ? playerUrl(e) : boxscoreUrl(e);
+    const link = url
+      ? `<a href="${url}" target="_blank" rel="noopener">[link]</a>`
+      : '—';
+    return `<div class="recentRow"><span class="nm">${e.pl || 'Unknown'}</span><span class="dt">${e.d || '—'}</span><span class="ln">${link}</span></div>`;
+  }).join('');
 }
 function showDetailForEnclosed(p, r, a) {
   detailEl.style.display = 'block';
@@ -839,6 +922,7 @@ function applyVisibilityFilters() {
   const hideScor = document.getElementById('hideScorigamis').checked;
   const hideRep = document.getElementById('hideRepeated').checked;
   const yr = getYearRange();
+  const b = state.base;
   const dummy = new THREE.Object3D();
   for (let i = 0; i < state.instanceIndex.length; i++) {
     const c = state.instanceIndex[i];
@@ -856,7 +940,7 @@ function applyVisibilityFilters() {
     if (blocked) {
       mesh.setMatrixAt(i, HIDE_MATRIX);
     } else {
-      dummy.position.set(c.p, c.r, c.a);
+      dummy.position.set(c.p - b.x, c.r - b.y, c.a - b.z);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
     }
@@ -1047,7 +1131,7 @@ const SPORTS = {
   mlb: {
     label: 'MLB',
     title: 'BoxScorigami',
-    defaults: ['ab', 'h', 'hr'],
+    defaults: ['sb', 'rbi', 'hr'],
   },
 };
 
@@ -1124,15 +1208,15 @@ let SPORT = 'nba';
 // 'game' = per-game box scores, 'season' = player-season view.
 // Switches which tally folder loadTally() fetches from.
 let MODE = 'game';
-// Season mode (NBA/NFL): when false, hide "injured" seasons whose games played
-// fall below the sport's threshold. MLB season totals have no games filter.
-let INJURED = false;
-const INJURED_MIN = { nba: 20, nfl: 6 };
+// Season mode (NBA/NFL): when on, hide seasons whose games played fall below
+// the sport's threshold. On by default. MLB season totals have no games filter.
+let MIN_GAMES = true;
+const MIN_GAMES_MIN = { nba: 20, nfl: 6 };
 
-// True if this season cell should be hidden by the injured-seasons filter.
+// True if this season cell should be hidden by the min-games filter.
 function isGamesBlocked(c) {
-  if (MODE !== 'season' || INJURED) return false;
-  const min = INJURED_MIN[SPORT];
+  if (MODE !== 'season' || !MIN_GAMES) return false;
+  const min = MIN_GAMES_MIN[SPORT];
   return min != null && typeof c.gp === 'number' && c.gp < min;
 }
 const STATS_META = {};
@@ -1181,6 +1265,7 @@ async function loadTally(x, y, z) {
     return {
       p: v[map[0]], r: v[map[1]], a: v[map[2]],
       n: c.n, d: c.d, pl: c.pl, t: c.t, m: c.m, g: c.g, gp: c.gp, pid: c.pid,
+      recent: c.recent,   // up-to-5 most-recent occurrences (n>=2 cells only)
     };
   });
 
@@ -1267,14 +1352,14 @@ async function loadSport(sport) {
   document.body.classList.toggle('sport-mlb', sport === 'mlb');
   // Reset the per-game/season toggle, injured filter, and coarseness on switch.
   MODE = 'game';
-  INJURED = false;
+  MIN_GAMES = true;
   COARSE = 1;
   const modeToggle = document.getElementById('modeToggle');
   modeToggle.querySelectorAll('button').forEach(b =>
     b.classList.toggle('active', b.dataset.mode === 'game'));
   document.querySelectorAll('#coarseToggle button').forEach(x =>
     x.classList.toggle('active', x.dataset.k === '1'));
-  updateInjuredToggle();
+  updateMinGamesToggle();
   // Player names are sport-specific — clear any prior chips on switch.
   blockedPlayers.clear();
   refreshBlockedLower();
@@ -1304,12 +1389,12 @@ document.querySelectorAll('#tabs button').forEach(b => {
 
 // The injured-seasons toggle only applies in season mode for sports with a
 // threshold (NBA/NFL); hide it otherwise and reflect current on/off state.
-function updateInjuredToggle() {
+function updateMinGamesToggle() {
   const btn = document.getElementById('injuredToggle');
-  const show = MODE === 'season' && INJURED_MIN[SPORT] != null;
+  const show = MODE === 'season' && MIN_GAMES_MIN[SPORT] != null;
   btn.style.display = show ? 'block' : 'none';
-  btn.classList.toggle('active', INJURED);
-  btn.textContent = `Injured seasons: ${INJURED ? 'on' : 'off'}`;
+  btn.classList.toggle('active', MIN_GAMES);
+  btn.textContent = `Min Games: ${MIN_GAMES ? 'on' : 'off'}`;
 }
 
 document.querySelectorAll('#modeToggle button').forEach(b => {
@@ -1318,16 +1403,16 @@ document.querySelectorAll('#modeToggle button').forEach(b => {
     MODE = b.dataset.mode;
     document.querySelectorAll('#modeToggle button').forEach(x =>
       x.classList.toggle('active', x.dataset.mode === MODE));
-    updateInjuredToggle();
+    updateMinGamesToggle();
     refresh();
   });
 });
 
-// Injured filter toggles client-side — gp is already in the loaded cells, so
+// Min-games filter toggles client-side — gp is already in the loaded cells, so
 // just re-apply visibility (no refetch).
 document.getElementById('injuredToggle').addEventListener('click', () => {
-  INJURED = !INJURED;
-  updateInjuredToggle();
+  MIN_GAMES = !MIN_GAMES;
+  updateMinGamesToggle();
   applyVisibilityFilters();
 });
 

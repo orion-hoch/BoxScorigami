@@ -89,6 +89,39 @@ def compute_payload_season(x, y, z) -> str:
     else:
         max_x = max_y = max_z = 0
 
+    # Up to 5 most-recent (season DESC) player-seasons per repeated cell (n>=2),
+    # attached as `recent` for the detail panel's "Recent Seasons" list.
+    recent_rows = conn.execute(
+        f"""
+        WITH counts AS (
+            SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
+            FROM season_avg GROUP BY {cx}, {cy}, {cz}
+        ),
+        recent AS (
+            SELECT {cx} AS x, {cy} AS y, {cz} AS z, player_id, player_name, season, gp,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY {cx}, {cy}, {cz}
+                       ORDER BY season DESC, gp DESC, player_name
+                   ) AS rn
+            FROM season_avg
+        )
+        SELECT r.x, r.y, r.z, r.player_id, r.player_name, r.season, r.gp
+        FROM recent r
+        JOIN counts c ON c.x = r.x AND c.y = r.y AND c.z = r.z
+        WHERE c.n >= 2 AND r.rn <= 5
+        ORDER BY r.x, r.y, r.z, r.rn
+        """
+    ).fetchall()
+    by_key = {}
+    for r in recent_rows:
+        by_key.setdefault((r["x"], r["y"], r["z"]), []).append(
+            {"pl": r["player_name"], "d": str(r["season"]), "gp": r["gp"],
+             "pid": r["player_id"]})
+    for cell in cells:
+        rec = by_key.get((cell["p"], cell["r"], cell["a"]))
+        if rec:
+            cell["recent"] = rec
+
     leaders = conn.execute(
         f"""
         WITH counts AS (
