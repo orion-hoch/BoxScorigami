@@ -49,24 +49,29 @@ def build_season_avg(conn):
     conn.commit()
 
 
-def compute_payload_season(x, y, z) -> str:
+def compute_payload_season(x, y, z, min_gp=None) -> str:
     _validate_axes(x, y, z)
     cx, cy, cz = STATS[x]["col"], STATS[y]["col"], STATS[z]["col"]
+    # When min_gp is set, exclude player-seasons below that games threshold from
+    # every query (tally counts, representative, recent list, leaderboard) so the
+    # season universe is fully consistent — short seasons are simply not present.
+    flt = f"WHERE gp >= {min_gp}" if min_gp else ""
+    lead_flt = f"AND s.gp >= {min_gp}" if min_gp else ""
     conn = open_db()
 
     rows = conn.execute(
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
-            FROM season_avg GROUP BY {cx}, {cy}, {cz}
+            FROM season_avg {flt} GROUP BY {cx}, {cy}, {cz}
         ),
         rep AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, player_id, player_name, season, gp,
                    ROW_NUMBER() OVER (
                        PARTITION BY {cx}, {cy}, {cz}
-                       ORDER BY gp DESC, season DESC, player_name
+                       ORDER BY season DESC, player_name
                    ) AS rn
-            FROM season_avg
+            FROM season_avg {flt}
         )
         SELECT c.x, c.y, c.z, c.n, r.player_id, r.player_name, r.season, r.gp
         FROM counts c
@@ -95,15 +100,15 @@ def compute_payload_season(x, y, z) -> str:
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
-            FROM season_avg GROUP BY {cx}, {cy}, {cz}
+            FROM season_avg {flt} GROUP BY {cx}, {cy}, {cz}
         ),
         recent AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, player_id, player_name, season, gp,
                    ROW_NUMBER() OVER (
                        PARTITION BY {cx}, {cy}, {cz}
-                       ORDER BY season DESC, gp DESC, player_name
+                       ORDER BY season DESC, player_name
                    ) AS rn
-            FROM season_avg
+            FROM season_avg {flt}
         )
         SELECT r.x, r.y, r.z, r.player_id, r.player_name, r.season, r.gp
         FROM recent r
@@ -126,12 +131,12 @@ def compute_payload_season(x, y, z) -> str:
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
-            FROM season_avg GROUP BY {cx}, {cy}, {cz}
+            FROM season_avg {flt} GROUP BY {cx}, {cy}, {cz}
         )
         SELECT s.player_id, s.player_name, COUNT(*) AS unique_cells
         FROM season_avg s
         JOIN counts c ON s.{cx} = c.x AND s.{cy} = c.y AND s.{cz} = c.z
-        WHERE c.n = 1
+        WHERE c.n = 1 {lead_flt}
         GROUP BY s.player_id, s.player_name
         ORDER BY unique_cells DESC, s.player_name
         LIMIT 50
@@ -154,11 +159,18 @@ def compute_payload_season(x, y, z) -> str:
     return json.dumps(payload, separators=(",", ":"))
 
 
-OUT_DIR    = HERE.parent / "public" / "nba"
-TALLY_DIR  = OUT_DIR / "tally"
-SEASON_DIR = OUT_DIR / "tally-season"
+OUT_DIR        = HERE.parent / "public" / "nba"
+TALLY_DIR      = OUT_DIR / "tally"
+SEASON_DIR     = OUT_DIR / "tally-season"
+SEASON_MIN_DIR = OUT_DIR / "tally-season-min"
 TALLY_DIR.mkdir(parents=True, exist_ok=True)
 SEASON_DIR.mkdir(parents=True, exist_ok=True)
+SEASON_MIN_DIR.mkdir(parents=True, exist_ok=True)
+
+# Games threshold for the "Min Games" season dataset (tally-season-min). Seasons
+# below this are excluded before tallying. Must match MIN_GAMES_MIN in
+# public/index.html.
+MIN_GP = 20
 
 stats_keys = list(STATS.keys())
 
@@ -193,4 +205,5 @@ def export(label, fn, out_dir):
 
 export("per-game", compute_payload, TALLY_DIR)
 export("season", compute_payload_season, SEASON_DIR)
+export("season (min games)", lambda a, b, c: compute_payload_season(a, b, c, MIN_GP), SEASON_MIN_DIR)
 print(f"\ndeploy folder: {OUT_DIR}")

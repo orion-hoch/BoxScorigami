@@ -13,31 +13,34 @@
                overflow: hidden; }
   #canvas { display: block; width: 100%; height: 100%; }
   .panel {
-    position: absolute; padding: 14px 16px;
+    position: absolute; padding: 10px 12px;
     background: rgba(20, 22, 26, 0.85); border: 2px solid #3a4150; border-radius: 8px;
-    backdrop-filter: blur(6px); font-size: 13px; line-height: 1.45;
+    backdrop-filter: blur(6px); font-size: 12px; line-height: 1.35;
   }
-  #info { top: 12px; left: 12px; min-width: 280px; max-width: 340px; }
+  #info { top: 12px; left: 12px; min-width: 280px; max-width: 340px;
+    max-height: calc(100vh - 24px); overflow-y: auto; overflow-x: hidden; }
   #detail { top: 54px; right: 12px; min-width: 260px; max-width: 320px; display: none; }
   #leaders {
     bottom: 12px; right: 12px; max-width: 280px; max-height: 50vh; overflow: hidden;
     display: flex; flex-direction: column;
   }
-  h1, h2 { font-size: 14px; margin: 0 0 8px 0; letter-spacing: .02em; }
+  h1, h2 { font-size: 13px; margin: 0 0 5px 0; letter-spacing: .02em; }
   #cubeTitle {
     font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
-    font-weight: 700; font-size: 18px; letter-spacing: .04em;
+    font-weight: 700; font-size: 15px; letter-spacing: .04em;
   }
-  .hint { color: #8b94a0; font-size: 12px; }
+  .hint { color: #8b94a0; font-size: 11px; }
   .row { display: flex; justify-content: space-between; gap: 12px; margin: 2px 0; }
   .row .k { color: #8b94a0; }
   .row .v { color: #e6e8eb; font-variant-numeric: tabular-nums; }
 
-  #legend { margin-top: 10px; display: flex; gap: 10px; align-items: center; font-size: 12px; }
+  #legend { margin-top: 7px; display: flex; gap: 10px; align-items: center; font-size: 11px; }
   #legend .sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; vertical-align: middle; margin-right: 4px; border: 1px solid rgba(255,255,255,.15); }
 
-  #controls { margin-top: 12px; display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+  #controls { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; font-size: 11px; }
   #controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  #controls .ctl-row { display: flex; gap: 16px; align-items: center; }
+  #controls .ctl-row label { flex: 0 0 auto; }
   #controls .sliderRow { display: grid; grid-template-columns: 78px 1fr 36px; align-items: center; gap: 8px; }
   #controls .sliderRow input[type="range"] { width: 100%; }
   #controls .sliderRow .num { font-variant-numeric: tabular-nums; color: #8b94a0; font-size: 11px; text-align: right; }
@@ -58,14 +61,14 @@
     padding: 3px 6px; font-size: 12px; width: 100%;
   }
   #axisGrid {
-    display: grid; grid-template-columns: 24px 1fr; gap: 6px 8px; align-items: center;
-    margin-top: 8px; padding: 8px 10px;
+    display: grid; grid-template-columns: 24px 1fr; gap: 5px 8px; align-items: center;
+    margin-top: 6px; padding: 6px 9px;
     background: rgba(0,0,0,0.18); border: 2px solid #3a4150; border-radius: 6px;
   }
   #axisGrid .lab { font-weight: 600; font-variant-numeric: tabular-nums; color: #8b94a0; }
 
   .subpanel {
-    margin-top: 12px; padding: 10px 12px;
+    margin-top: 8px; padding: 8px 10px;
     background: rgba(0,0,0,0.18); border: 2px solid #3a4150; border-radius: 6px;
   }
   .subpanel h2 { margin: 0 0 8px 0; font-size: 12px; color: #e6e8eb;
@@ -192,10 +195,10 @@
   }
 
   .filter-toggle {
-    margin-top: 8px;
+    margin-top: 8px; width: 100%; box-sizing: border-box;
     background: transparent; color: #8b94a0;
     border: 1px solid #3a4150; border-radius: 4px;
-    padding: 4px 12px; font-size: 11px; cursor: pointer;
+    padding: 2px 12px; font-size: 11px; cursor: pointer;
     font-family: inherit; letter-spacing: .04em;
   }
   .filter-toggle:hover { color: #e6e8eb; border-color: #5a6170; }
@@ -213,6 +216,20 @@
     cursor: pointer; padding: 0 2px; font-size: 12px; line-height: 1;
   }
   .chip button:hover { color: #ff6b6b; }
+  #posBar { display:flex; flex-wrap:wrap; gap:4px; margin:8px 0 6px; }
+  #posBar button {
+    background:#1b1f24; color:#9aa0a6; border:1px solid #2a2f36; border-radius:5px;
+    padding:3px 8px; font-size:11px; cursor:pointer; font-family:inherit;
+  }
+  #posBar button:hover { color:#e6e8eb; }
+  #posBar button.active { background:#2a2f36; color:#f7c948; border-color:#3a4049; }
+  #wlBar { display:flex; align-items:center; gap:4px; margin:0 0 8px; }
+  #wlBar .lab { font-size:11px; color:#7a8088; margin-right:4px; }
+  #wlBar button {
+    background:#1b1f24; color:#9aa0a6; border:1px solid #2a2f36; border-radius:5px;
+    padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;
+  }
+  #wlBar button.active { background:#2a2f36; color:#f7c948; }
 </style>
 </head>
 <body>
@@ -238,6 +255,14 @@
   </div>
   <div class="hint" id="axisHint">Choose any three stats for the axes</div>
 
+  <div id="posBar" style="display:none"></div>
+  <div id="wlBar" style="display:none">
+    <span class="lab">Decision</span>
+    <button data-wl="all" class="active">All</button>
+    <button data-wl="1">Wins</button>
+    <button data-wl="0">Losses</button>
+  </div>
+
   <div id="axisGrid">
     <span class="lab">X</span><select id="axisX"></select>
     <span class="lab">Y</span><select id="axisY"></select>
@@ -251,16 +276,20 @@
   </div>
 
   <div id="controls">
-    <label><input type="checkbox" id="showEnclosed" /> Show Near Misses<span class="info-icon" data-tip="Statlines that haven't happened but are surrounded by statlines that have">?</span></label>
-    <label><input type="checkbox" id="hideScorigamis" /> Hide Scorigamis (Red Cells)</label>
-    <label><input type="checkbox" id="hideRepeated" /> Hide Repeated Games (Green Cells)</label>
+    <div class="ctl-row">
+      <label><input type="checkbox" id="showEnclosed" /> Show Near Misses<span class="info-icon" data-tip="Statlines that haven't happened but are surrounded by statlines that have">?</span></label>
+      <label><input type="checkbox" id="hideScorigamis" /> Hide Scorigamis</label>
+    </div>
+    <label><input type="checkbox" id="hideRepeated" /> Hide Repeated Games</label>
     <div class="sliderRow">
       <span>Peel</span>
       <input type="range" id="peel" min="0" max="1" step="0.005" value="0" />
       <span class="num" id="peelNum">0.00</span>
     </div>
-    <label><input type="checkbox" id="showAxes" checked /> Show Axes</label>
-    <label><input type="checkbox" id="showLabels" checked /> Show Labels</label>
+    <div class="ctl-row">
+      <label><input type="checkbox" id="showAxes" checked /> Show Axes</label>
+      <label><input type="checkbox" id="showLabels" checked /> Show Labels</label>
+    </div>
     <div class="coarseRow">
       <span>Coarseness<span class="info-icon" data-tip="Merge each k×k×k block of stat lines into one voxel, summing their tallies. Coarsens granular season data so true outliers stand out.">?</span></span>
       <div id="coarseToggle">
@@ -511,23 +540,35 @@ function repBetter(c, cur) {
 
 function coarsenData(data, k) {
   if (!data || k <= 1) return data;
+  const seasonMode = MODE === 'season';
   const bins = new Map();
   for (const c of data.cells) {
     const bp = Math.floor(c.p / k), br = Math.floor(c.r / k), ba = Math.floor(c.a / k);
     const key = `${bp},${br},${ba}`;
     let b = bins.get(key);
-    if (!b) { b = { p: bp, r: br, a: ba, n: 0, rep: null }; bins.set(key, b); }
+    if (!b) { b = { p: bp, r: br, a: ba, n: 0, rep: null, occ: [] }; bins.set(key, b); }
     b.n += c.n;
     if (repBetter(c, b.rep)) b.rep = c;
+    // Gather occurrences so the voxel's recent list is the TRUE 5 most-recent
+    // across every fine cell merged into it (not just the representative's).
+    // Each fine cell already stores its own true top-5, so the union contains
+    // the block's true top-5 — exact, same argument as the dump rollup.
+    if (Array.isArray(c.recent)) { for (const e of c.recent) b.occ.push(e); }
+    else b.occ.push({ pl: c.pl, d: c.d, t: c.t, m: c.m, g: c.g, pid: c.pid, w: c.w });
   }
+  // date DESC, with a deterministic tiebreak matching the dump ordering.
+  const cmp = seasonMode
+    ? (a, e) => (a.d < e.d ? 1 : a.d > e.d ? -1 : 0) || (a.pl < e.pl ? -1 : a.pl > e.pl ? 1 : 0)
+    : (a, e) => (a.d < e.d ? 1 : a.d > e.d ? -1 : 0) || (Number(e.g || 0) - Number(a.g || 0));
   const cells = [];
   for (const b of bins.values()) {
     const r = b.rep;
+    const recent = b.occ.sort(cmp).slice(0, 5);
     // sp/sr/sa keep the representative line's true (un-binned) stat values so
     // the detail panel can show the exact statline behind a coarsened voxel.
     cells.push({ p: b.p, r: b.r, a: b.a, n: b.n,
                  d: r.d, pl: r.pl, t: r.t, m: r.m, g: r.g, gp: r.gp, pid: r.pid,
-                 sp: r.p, sr: r.r, sa: r.a, recent: r.recent });
+                 sp: r.p, sr: r.r, sa: r.a, recent });
   }
   const scaleAxis = (ax) => ({ ...ax, max: Math.floor(ax.max / k) });
   return {
@@ -741,6 +782,17 @@ function pick(event) {
   return hits[0] || null;
 }
 
+// Rate axes (AVG/OBP/ERA/…) store scaled-integer bins; STATS_META carries the
+// scale + decimals so we show .310 / 2.6 instead of the raw 31 / 26.
+function fmtStat(key, v) {
+  const m = STATS_META[key];
+  if (m && m.scale) {
+    const s = (v / m.scale).toFixed(m.decimals);
+    return s.startsWith('0.') ? s.slice(1) : s;   // .310 not 0.310
+  }
+  return v;
+}
+
 function fmtAxis(c) {
   const a = state.axes;
   // When coarsened, p/r/a are bin indices — show the stat range each covers.
@@ -748,7 +800,7 @@ function fmtAxis(c) {
     const rng = v => `${v * COARSE}–${v * COARSE + COARSE - 1}`;
     return `${rng(c.p)} ${a.x.label.toLowerCase()} · ${rng(c.r)} ${a.y.label.toLowerCase()} · ${rng(c.a)} ${a.z.label.toLowerCase()}`;
   }
-  return `${c.p} ${a.x.label.toLowerCase()} · ${c.r} ${a.y.label.toLowerCase()} · ${c.a} ${a.z.label.toLowerCase()}`;
+  return `${fmtStat(a.x.key, c.p)} ${a.x.label.toLowerCase()} · ${fmtStat(a.y.key, c.r)} ${a.y.label.toLowerCase()} · ${fmtStat(a.z.key, c.a)} ${a.z.label.toLowerCase()}`;
 }
 
 function showDetailForCell(c) {
@@ -783,15 +835,18 @@ function showDetailForCell(c) {
     ${statlineRow}
     <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c, c.t ? ' (' + c.t + ')' : '')}</span></div>
     <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '—'}</span></div>
+    ${(c.w === 1 || c.w === 0) ? `<div class="row"><span class="k">Decision</span><span class="v">${c.w === 1 ? 'Won' : 'Lost'}</span></div>` : ''}
     <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
   // Repeated cells (n>=2) carry up to 5 most-recent occurrences, shown in a
   // collapsible "Last N" bubble beneath the headline (collapsed by default).
-  const hasRecent = Array.isArray(c.recent) && c.recent.length > 1;
+  // The Min Games filtering happens in the export, so c.recent already excludes
+  // sub-threshold seasons when the min-games dataset is loaded — nothing to do here.
+  const hasRecent = Array.isArray(c.recent) && c.recent.length >= 1;
   const recentBox = hasRecent ? `
     <div class="recent-box">
       <div class="recent-header">
-        <span class="rt">Last ${c.recent.length}</span>
+        <span class="rt">${seasonMode ? 'Recent Seasons' : 'Recent Games'} (${c.recent.length})</span>
         <button class="panel-btn" id="recentToggle" title="expand">+</button>
       </div>
       <div id="recentList" class="recent-list" style="display:none">${recentRows(c.recent, seasonMode)}</div>
@@ -936,7 +991,7 @@ function applyVisibilityFilters() {
       if (yr.max !== null && yyyy > yr.max) yearBlocked = true;
     }
     const blocked = (hideScor && c.n === 1) || (hideRep && c.n >= 2) ||
-                    playerBlocked || yearBlocked || isGamesBlocked(c);
+                    playerBlocked || yearBlocked;
     if (blocked) {
       mesh.setMatrixAt(i, HIDE_MATRIX);
     } else {
@@ -963,7 +1018,6 @@ function recomputeLeaderboard() {
       if (yr.max !== null && yyyy > yr.max) continue;
     }
     if (isPlayerBlocked(c)) continue;
-    if (isGamesBlocked(c)) continue;
     counts.set(c.pl, (counts.get(c.pl) || 0) + 1);
   }
   const sorted = [...counts.entries()]
@@ -1211,19 +1265,115 @@ let MODE = 'game';
 // Season mode (NBA/NFL): when on, hide seasons whose games played fall below
 // the sport's threshold. On by default. MLB season totals have no games filter.
 let MIN_GAMES = true;
+// Per-sport games threshold. Used to (a) pick the pre-filtered season dataset
+// in loadTally and (b) show/hide the Min Games toggle. The actual filtering of
+// sub-threshold seasons happens in the export, not here. Must match the MIN_GP
+// constants in nba/export_static.py and nfl/export_static.py.
 const MIN_GAMES_MIN = { nba: 20, nfl: 6 };
-
-// True if this season cell should be hidden by the min-games filter.
-function isGamesBlocked(c) {
-  if (MODE !== 'season' || !MIN_GAMES) return false;
-  const min = MIN_GAMES_MIN[SPORT];
-  return min != null && typeof c.gp === 'number' && c.gp < min;
-}
 const STATS_META = {};
 
+// --- MLB position cubes -----------------------------------------------------
+// MLB ships one distinct-line dump per position+mode; the cube for any 3 axes
+// is rolled up in the browser by rollupCube() below. Batting
+// positions expose batting axes; P and All add pitching (cross-domain).
+let POSITION = 'all';
+let WL_FILTER = null;        // 1=wins, 0=losses, null=all (pitching game only)
+const DUMP_CACHE = {};       // `${pos}/${mode}` -> loaded dump
+const MLB_POSITIONS = [
+  ['all', 'All'], ['p', 'P'], ['c', 'C'], ['1b', '1B'], ['2b', '2B'],
+  ['3b', '3B'], ['ss', 'SS'], ['lf', 'LF'], ['cf', 'CF'], ['rf', 'RF'], ['dh', 'DH'],
+];
+const MLB_FULL_POS = new Set(['all', 'p']);   // positions with pitching axes + W/L filter
+
+function rollupCube(dump, x, y, z, wlFilter) {
+  const idx = {}; dump.axes.forEach((k, i) => idx[k] = i);
+  const ix = idx[x], iy = idx[y], iz = idx[z];
+  const game = dump.mode === 'game';
+  // Drop 0-pitch games when Pitches is an axis (pre-1988 NP is untracked and
+  // shows as 0, creating a spurious spike at the origin).
+  const dz0 = x === 'p_np', dz1 = y === 'p_np', dz2 = z === 'p_np';
+  const cells = new Map();
+  for (const ln of dump.lines) {
+    if (wlFilter != null && ln.w !== wlFilter) continue;
+    const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];
+    if (vx == null || vy == null || vz == null) continue;
+    if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
+    const key = vx + ',' + vy + ',' + vz;
+    let c = cells.get(key);
+    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, occ: [] }; cells.set(key, c); }
+    c.n += ln.n;
+    for (const o of ln.r) c.occ.push(o);
+  }
+  const cmpGame = (a, b) =>
+    (a[5] < b[5] ? 1 : a[5] > b[5] ? -1 : 0) ||
+    (Number(b[4] || 0) - Number(a[4] || 0)) || (b[0] - a[0]);
+  const cmpSeason = (a, b) =>
+    (a[2] < b[2] ? 1 : a[2] > b[2] ? -1 : 0) ||
+    (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) || (a[0] - b[0]);
+  const out = [];
+  for (const c of cells.values()) {
+    const recents = c.occ.slice().sort(game ? cmpGame : cmpSeason).slice(0, 5);
+    const top = recents[0];
+    let cell;
+    if (game) {
+      cell = { p: c.p, r: c.r, a: c.a, n: c.n, d: top[5], pl: top[1], t: top[2],
+               m: top[3], g: top[4], pid: top[0], w: top[6] };
+      cell.recent = recents.map(o => ({ pl: o[1], d: o[5], t: o[2],
+               m: o[3], g: o[4], pid: o[0], w: o[6] }));
+    } else {
+      cell = { p: c.p, r: c.r, a: c.a, n: c.n, d: top[2], pl: top[1], t: null,
+               m: top[2] + ' season', g: null, gp: top[3], pid: top[0] };
+      cell.recent = recents.map(o => ({ pl: o[1], d: o[2], pid: o[0] }));
+    }
+    out.push(cell);
+  }
+  const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
+  const my = out.reduce((m, c) => Math.max(m, c.r), 0);
+  const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
+  const uniq = new Map(), names = new Map();
+  for (const cell of out) if (cell.n === 1) {
+    uniq.set(cell.pid, (uniq.get(cell.pid) || 0) + 1); names.set(cell.pid, cell.pl);
+  }
+  const leaderboard = [...uniq.entries()]
+    .map(([pid, n]) => ({ player_id: pid, name: names.get(pid), n }))
+    .sort((a, b) => b.n - a.n || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .slice(0, 50);
+  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out, leaderboard };
+}
+
+async function getDump() {
+  const mode = MODE === 'season' ? 'season' : 'game';
+  const key = `${POSITION}/${mode}`;
+  if (DUMP_CACHE[key]) return DUMP_CACHE[key];
+  // Dumps are gzipped in the repo (the all/p game dumps exceed 100 MB raw).
+  // Fetch the .gz and inflate client-side via DecompressionStream. If the host
+  // already decompressed it (served with Content-Encoding: gzip), fetch hands us
+  // plain JSON — so fall back to parsing the raw bytes when inflation fails.
+  const url = `mlb/${POSITION}/${mode}.json.gz`;
+  statusEl.textContent = `loading ${POSITION.toUpperCase()} ${mode} data…`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
+  const bytes = await r.arrayBuffer();
+  let d;
+  try {
+    const stream = new Response(bytes).body.pipeThrough(new DecompressionStream('gzip'));
+    d = JSON.parse(await new Response(stream).text());
+  } catch (e) {
+    // already-decompressed (or DecompressionStream unavailable) — parse as-is.
+    d = JSON.parse(new TextDecoder().decode(bytes));
+  }
+  DUMP_CACHE[key] = d;
+  return d;
+}
+
 async function loadStats() {
-  const r = await fetch(`${SPORT}/stats.json`);
-  if (!r.ok) throw new Error(`GET ${SPORT}/stats.json: ` + r.status);
+  // MLB axis lists are per position AND per mode (season adds rate stats);
+  // NBA/NFL have a single sport-wide stats.json.
+  const url = (SPORT === 'mlb')
+    ? `mlb/${POSITION}/${MODE === 'season' ? 'stats-season' : 'stats'}.json`
+    : `${SPORT}/stats.json`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`GET ${url}: ` + r.status);
   const stats = (await r.json()).stats;
   // Reset and refill — different sport, different stat keys.
   for (const k of Object.keys(STATS_META)) delete STATS_META[k];
@@ -1232,8 +1382,30 @@ async function loadStats() {
 }
 
 async function loadTally(x, y, z) {
+  // MLB: roll the position dump up onto the chosen axes in-browser (no per-combo
+  // fetch). The dump is cached, so axis/W-L changes are instant.
+  if (SPORT === 'mlb') {
+    const dump = await getDump();
+    const wl = (MODE !== 'season' && MLB_FULL_POS.has(POSITION)) ? WL_FILTER : null;
+    const r = rollupCube(dump, x, y, z, wl);
+    const mkAxis = (k, max) => ({ key: k, label: STATS_META[k].label, color: STATS_META[k].color, max });
+    return {
+      axes: { x: mkAxis(x, r.axes.x.max), y: mkAxis(y, r.axes.y.max), z: mkAxis(z, r.axes.z.max) },
+      cells: r.cells,        // already in user (x,y,z) order
+      leaderboard: r.leaderboard,
+    };
+  }
   const fileKeys = [x, y, z].slice().sort();
-  const dir = MODE === 'season' ? 'tally-season' : 'tally';
+  // Season mode swaps to the pre-filtered tally when Min Games is on: the export
+  // bakes sub-threshold seasons out entirely, so the tally, leaderboard, and
+  // recent list are all computed over qualifying seasons only. Sports without a
+  // games threshold (MLB) always use the plain season tally.
+  let dir;
+  if (MODE === 'season') {
+    dir = (MIN_GAMES && MIN_GAMES_MIN[SPORT] != null) ? 'tally-season-min' : 'tally-season';
+  } else {
+    dir = 'tally';
+  }
   const url = `${SPORT}/${dir}/${fileKeys.join('_')}.json`;
   statusEl.textContent = `loading ${x}/${y}/${z}...`;
   const r = await fetch(url);
@@ -1372,10 +1544,16 @@ async function loadSport(sport) {
   // Reset year filter inputs; updateYearBounds() runs after data load.
   document.getElementById('yearFrom').value = '';
   document.getElementById('yearTo').value = '';
+  // MLB-only position selector; reset to All on (re)entry.
+  const isMlb = sport === 'mlb';
+  document.getElementById('posBar').style.display = isMlb ? 'flex' : 'none';
+  if (isMlb) { POSITION = 'all'; WL_FILTER = null; buildPosBar();
+    document.querySelectorAll('#wlBar button').forEach(b => b.classList.toggle('active', b.dataset.wl === 'all')); }
+  updateWlBar();
   try {
     statusEl.textContent = `loading ${SPORTS[sport].label} ...`;
     const stats = await loadStats();
-    fillDropdowns(stats, SPORTS[sport].defaults);
+    fillDropdowns(stats, isMlb ? mlbAxisDefaults(stats) : SPORTS[sport].defaults);
     await refresh();
   } catch (err) {
     statusEl.textContent = 'ERROR: ' + err.message;
@@ -1385,6 +1563,58 @@ async function loadSport(sport) {
 
 document.querySelectorAll('#tabs button').forEach(b => {
   b.addEventListener('click', () => loadSport(b.dataset.sport));
+});
+
+// --- MLB position selector + W/L filter -------------------------------------
+function buildPosBar() {
+  const bar = document.getElementById('posBar');
+  bar.innerHTML = MLB_POSITIONS.map(([k, l]) =>
+    `<button data-pos="${k}" class="${k === POSITION ? 'active' : ''}">${l}</button>`).join('');
+  bar.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => setPosition(b.dataset.pos)));
+}
+
+function updateWlBar() {
+  document.getElementById('wlBar').style.display =
+    (SPORT === 'mlb' && MLB_FULL_POS.has(POSITION) && MODE !== 'season') ? 'flex' : 'none';
+}
+
+// Pick 3 valid axes for the current stat list: keep the current picks if they
+// all still exist, else fall back to MLB defaults, then any remaining keys.
+function mlbAxisDefaults(stats) {
+  const keys = new Set(stats.map(s => s.key));
+  const cur = [axisXEl.value, axisYEl.value, axisZEl.value];
+  if (cur.every(k => keys.has(k)) && new Set(cur).size === 3) return cur;
+  const pick = SPORTS.mlb.defaults.filter(k => keys.has(k));
+  for (const s of stats) { if (pick.length >= 3) break; if (!pick.includes(s.key)) pick.push(s.key); }
+  return pick.slice(0, 3);
+}
+
+// Reload the per-position+mode axis list, repopulate dropdowns, re-render.
+async function reloadMlbAxes() {
+  try {
+    const stats = await loadStats();
+    fillDropdowns(stats, mlbAxisDefaults(stats));
+    updateWlBar();
+    await refresh();
+  } catch (err) { statusEl.textContent = 'ERROR: ' + err.message; console.error(err); }
+}
+
+async function setPosition(pos) {
+  if (pos === POSITION) return;
+  POSITION = pos;
+  WL_FILTER = null;
+  buildPosBar();
+  document.querySelectorAll('#wlBar button').forEach(b => b.classList.toggle('active', b.dataset.wl === 'all'));
+  await reloadMlbAxes();
+}
+
+document.querySelectorAll('#wlBar button').forEach(b => {
+  b.addEventListener('click', () => {
+    WL_FILTER = b.dataset.wl === 'all' ? null : parseInt(b.dataset.wl, 10);
+    document.querySelectorAll('#wlBar button').forEach(x => x.classList.toggle('active', x === b));
+    refresh();   // rollup from cached dump — no refetch
+  });
 });
 
 // The injured-seasons toggle only applies in season mode for sports with a
@@ -1404,16 +1634,19 @@ document.querySelectorAll('#modeToggle button').forEach(b => {
     document.querySelectorAll('#modeToggle button').forEach(x =>
       x.classList.toggle('active', x.dataset.mode === MODE));
     updateMinGamesToggle();
-    refresh();
+    // MLB game/season have different axis lists (season adds rate stats), so
+    // reload the stat list + dropdowns; other sports just refetch.
+    if (SPORT === 'mlb') reloadMlbAxes();
+    else refresh();
   });
 });
 
-// Min-games filter toggles client-side — gp is already in the loaded cells, so
-// just re-apply visibility (no refetch).
+// Min-games toggle swaps between the pre-filtered and unfiltered season tally
+// datasets, so it refetches rather than re-filtering client-side.
 document.getElementById('injuredToggle').addEventListener('click', () => {
   MIN_GAMES = !MIN_GAMES;
   updateMinGamesToggle();
-  applyVisibilityFilters();
+  refresh();
 });
 
 // Coarseness re-bins the cached rawData and rebuilds — no refetch.
