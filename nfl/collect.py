@@ -1,13 +1,15 @@
 """Collect every NFL player-game stat line (1999 -> current) into SQLite.
 
-Uses nflreadpy.load_player_stats joined with load_schedules to attach
-game_id, game_date, and matchup. One request per season (cached locally by
-nflreadpy). Resumable: skips (season, season_type) pairs already done.
+Batched: one load_player_stats + one load_schedules call covers every requested
+season at once (nflreadpy caches the per-season parquets locally), joined to
+attach game_id/date/matchup, then written one season at a time. Resumable —
+seasons already in seasons_done are skipped; re-run with --force to refresh.
 
 Usage:
-    python collect.py                # full run, 1999 -> current
-    python collect.py --start 2020   # start at 2020 season
+    python collect.py                # all seasons 1999 -> current
+    python collect.py --start 2020   # 2020 -> current
     python collect.py --season 2024  # only 2024
+    python collect.py --force        # re-pull seasons already marked done
 """
 import argparse
 import sqlite3
@@ -71,33 +73,32 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
 
 
-def already_done(conn: sqlite3.Connection, season: str, stype: str) -> bool:
+def already_done(conn: sqlite3.Connection, season: str) -> bool:
     return conn.execute(
-        "SELECT 1 FROM seasons_done WHERE season=? AND season_type=?",
-        (season, stype),
+        "SELECT 1 FROM seasons_done WHERE season=? AND season_type='ALL'",
+        (season,),
     ).fetchone() is not None
 
 
-def fetch_season(season: int) -> pl.DataFrame:
-    """Load player stats + schedule join for a single season."""
-    stats = nfl.load_player_stats(seasons=[season])
-    sched = nfl.load_schedules(seasons=[season]).select([
-        "game_id", "season", "week", "gameday", "home_team", "away_team",
-    ])
-    # A player_stats row identifies the game by (season, week, team, opponent_team).
-    # Join twice — once where the player's team is home, once where away —
-    # then coalesce. Simpler: build a (season, week, team_a, team_b) -> game_id map.
+def fetch_all(seasons: list[int]) -> pl.DataFrame:
+    """Load player stats + schedule join for every requested season in one pull.
+
+    A player_stats row identifies its game by (season, week, team,
+    opponent_team). We build a (season, week, team, opponent_team) -> game_id
+    map from the schedule (one row per team per game) and left-join it on.
+    """
+    stats = nfl.load_player_stats(seasons=seasons)
+    sched = nfl.load_schedules(seasons=seasons)
     cols = ["game_id", "season", "week", "gameday", "team", "opponent_team"]
     home = sched.rename({"home_team": "team", "away_team": "opponent_team"}).select(cols)
     away = sched.rename({"away_team": "team", "home_team": "opponent_team"}).select(cols)
     keyed = pl.concat([home, away])  # one row per (game, team)
 
-    df = stats.join(
-        keyed.select(["season", "week", "team", "opponent_team", "game_id", "gameday"]),
+    return stats.join(
+        keyed,
         on=["season", "week", "team", "opponent_team"],
         how="left",
     )
-    return df
 
 
 def rows_for_insert(df: pl.DataFrame):
@@ -171,32 +172,31 @@ def main():
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
 
-    seasons = [args.season] if args.season else range(args.start, args.end + 1)
+    requested = [args.season] if args.season else list(range(args.start, args.end + 1))
+    todo = [s for s in requested if args.force or not already_done(conn, str(s))]
 
-    for season in seasons:
-        season_s = str(season)
-        # We pull both REG + POST in one shot, but the season_type comes from
-        # the player_stats column. We treat the season as the "done" key —
-        # split by season_type after fetch.
-        if not args.force and already_done(conn, season_s, "ALL"):
-            print(f"[skip] {season_s} (already done)")
-            continue
-        print(f"[fetch] {season_s} ...")
+    if todo:
+        print(f"[fetch] {len(todo)} season(s) ({todo[0]}-{todo[-1]}) in one batched pull ...")
         try:
-            df = fetch_season(season)
+            df = fetch_all(todo)
         except Exception as e:
-            print(f"  ERROR fetching {season_s}: {e}", file=sys.stderr)
-            continue
-        n = insert_season(conn, df)
-        conn.execute(
-            "INSERT OR REPLACE INTO seasons_done (season, season_type, n_rows) "
-            "VALUES (?, 'ALL', ?)",
-            (season_s, n),
-        )
-        conn.commit()
-        print(f"  -> {n:,} player-game rows")
+            print(f"  ERROR fetching {todo[0]}-{todo[-1]}: {e}", file=sys.stderr)
+            sys.exit(1)
+        # We pull REG + POST together; season_type comes from the player_stats
+        # column. seasons_done is keyed on the season (season_type='ALL') —
+        # split by season_type happens at query time, not here.
+        for season in todo:
+            n = insert_season(conn, df.filter(pl.col("season") == season))
+            conn.execute(
+                "INSERT OR REPLACE INTO seasons_done (season, season_type, n_rows) "
+                "VALUES (?, 'ALL', ?)",
+                (str(season), n),
+            )
+            conn.commit()
+            print(f"  -> {season}: {n:,} player-game rows")
+    else:
+        print("All requested seasons already collected (use --force to refresh).")
 
-    # Summary
     total = conn.execute("SELECT COUNT(*) FROM player_games").fetchone()[0]
     seasons_n = conn.execute("SELECT COUNT(*) FROM seasons_done").fetchone()[0]
     print(f"\nDONE. {total:,} total player-game rows across {seasons_n} seasons.")

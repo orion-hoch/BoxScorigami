@@ -10,14 +10,17 @@ a non-headless persistent context. Two phases:
   table, inserting one row per (game, player) into player_games. ~17K
   requests. SQLite checkpoint per game; resumable.
 
-PFR rate limit guidance: <=20 req/min. Default delay 5s is well under.
+PFR serves one boxscore per page, so Phase B cannot be batched — it's one
+request per game by design. PFR rate limit guidance: <=20 req/min. Default
+delay 5s is well under.
 
 Usage:
-    python collect.py enumerate                      # Phase A
-    python collect.py scrape                         # Phase B (all pending)
-    python collect.py scrape --start 1980 --end 1990 # subset
-    python collect.py scrape --retry-failed          # second pass on errored games
-    python collect.py stats                          # show progress
+    python collect_historical.py enumerate                      # Phase A
+    python collect_historical.py scrape                         # Phase B (all pending)
+    python collect_historical.py scrape --start 1980 --end 1990 # subset
+    python collect_historical.py scrape --retry-failed          # second pass on errored games
+    python collect_historical.py backfill-opponent              # repair opponent/matchup (no network)
+    python collect_historical.py stats                          # show progress
 """
 import argparse
 import datetime as dt
@@ -25,6 +28,7 @@ import re
 import sqlite3
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 from bs4 import BeautifulSoup, Comment
@@ -381,7 +385,12 @@ def extract_player_offense(html):
 def insert_player_rows(conn, game, players):
     if not players:
         return 0
-    home, away = game["home_team"], game["away_team"]
+    # Derive opponent/matchup from the two 3-letter team codes present in this
+    # game's player rows. games_to_scrape.home_team/away_team hold full names
+    # from the schedule page ("Portsmouth Spartans"), which never match the
+    # boxscore's team_abbr ("CRD") — so we resolve purely within the boxscore.
+    teams = sorted({p["team_abbr"] for p in players if p["team_abbr"]})
+    opp_of = {teams[0]: teams[1], teams[1]: teams[0]} if len(teams) == 2 else {}
     sql = """
     INSERT OR REPLACE INTO player_games (
         game_id, game_date, season, game_type,
@@ -403,7 +412,7 @@ def insert_player_rows(conn, game, players):
     batch = []
     for p in players:
         team = p["team_abbr"]
-        opp = away if team == home else home if team == away else None
+        opp = opp_of.get(team)
         matchup = f"{team} vs {opp}" if team and opp else None
         batch.append({
             **p,
@@ -434,7 +443,6 @@ def scrape_games(conn, browser, start, end, retry_failed, delay):
         print("Nothing to scrape.")
         return
 
-    from collections import deque
     total = len(games)
     print(f"Scraping {total:,} games...")
     t0 = time.time()
@@ -528,6 +536,44 @@ def recheck_empty_games(conn, browser, delay, start=None, end=None):
     print(f"\nRecheck done. fixed={fixed:,}  still_empty={still_empty:,}")
 
 
+def backfill_opponent(conn):
+    """Repair opponent/matchup on already-scraped rows (no network).
+
+    Newly scraped games get these from insert_player_rows directly; this fixes
+    rows written before that derivation existed. Both come from the two distinct
+    team_abbr values present per game; games without exactly two are left as-is.
+    """
+    games = conn.execute("""
+        SELECT game_id, GROUP_CONCAT(DISTINCT team_abbr) AS teams
+        FROM player_games
+        WHERE team_abbr IS NOT NULL
+        GROUP BY game_id
+    """).fetchall()
+    print(f"scanning {len(games):,} games...")
+    fixed = weird = 0
+    for g in games:
+        teams = [t for t in (g["teams"] or "").split(",") if t]
+        if len(teams) != 2:
+            weird += 1
+            continue
+        a, b = teams
+        conn.execute(
+            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
+            (b, f"{a} vs {b}", g["game_id"], a),
+        )
+        conn.execute(
+            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
+            (a, f"{b} vs {a}", g["game_id"], b),
+        )
+        fixed += 1
+    conn.commit()
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM player_games WHERE matchup IS NULL"
+    ).fetchone()[0]
+    print(f"fixed {fixed:,} games  ({weird:,} skipped: not exactly 2 teams; "
+          f"{remaining:,} rows still NULL)")
+
+
 def show_stats(conn):
     seas = conn.execute("SELECT COUNT(*) FROM seasons_enumerated").fetchone()[0]
     total = conn.execute("SELECT COUNT(*) FROM games_to_scrape").fetchone()[0]
@@ -566,6 +612,7 @@ def main():
     r.add_argument("--end", type=int)
     r.add_argument("--delay", type=float, default=DEFAULT_DELAY)
 
+    sub.add_parser("backfill-opponent", help="Repair opponent/matchup from team_abbr (no network)")
     sub.add_parser("stats", help="show progress")
 
     args = ap.parse_args()
@@ -574,6 +621,9 @@ def main():
 
     if args.cmd == "stats":
         show_stats(conn)
+        return
+    if args.cmd == "backfill-opponent":
+        backfill_opponent(conn)
         return
 
     with Browser() as browser:

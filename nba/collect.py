@@ -10,14 +10,9 @@ Usage:
     python collect.py --season 2024-25 --season-type "Regular Season"
 """
 import argparse
-import os
 import sqlite3
-import sys
 import time
 from pathlib import Path
-
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "nba_api" / "src"))
 
 from nba_api.stats.endpoints import leaguegamelog
 from nba_api.stats.library.parameters import PlayerOrTeamAbbreviation, SeasonTypePlayoffs
@@ -112,51 +107,44 @@ def fetch_season(season: str, season_type: str):
     raise RuntimeError(f"Giving up on {season} {season_type}: {last_err}")
 
 
-def _get(row: dict, *keys):
-    for k in keys:
-        if k in row and row[k] is not None:
-            return row[k]
-    return None
-
-
 def upsert_rows(conn: sqlite3.Connection, season: str, season_type: str, rows: list[dict]) -> int:
     payload = []
     for r in rows:
-        pts = _get(r, "PTS")
-        reb = _get(r, "REB")
-        ast = _get(r, "AST")
+        pts = r.get("PTS")
+        reb = r.get("REB")
+        ast = r.get("AST")
         if pts is None and reb is None and ast is None:
             continue
         # Skip DNP rows: MIN is recorded and equals 0. NULL MIN is kept
         # (early eras don't track minutes but only list players who played).
-        minutes = _get(r, "MIN")
+        minutes = r.get("MIN")
         if minutes is not None and float(minutes) == 0:
             continue
         payload.append(
             (
-                _get(r, "GAME_ID"),
-                _get(r, "GAME_DATE"),
+                r.get("GAME_ID"),
+                r.get("GAME_DATE"),
                 season,
                 season_type,
-                _get(r, "PLAYER_ID"),
-                _get(r, "PLAYER_NAME"),
-                _get(r, "TEAM_ID"),
-                _get(r, "TEAM_ABBREVIATION"),
-                _get(r, "MATCHUP"),
-                _get(r, "MIN"),
+                r.get("PLAYER_ID"),
+                r.get("PLAYER_NAME"),
+                r.get("TEAM_ID"),
+                r.get("TEAM_ABBREVIATION"),
+                r.get("MATCHUP"),
+                r.get("MIN"),
                 pts,
                 reb,
                 ast,
-                _get(r, "STL"),
-                _get(r, "BLK"),
-                _get(r, "TOV"),
-                _get(r, "PF"),
-                _get(r, "FGM"),
-                _get(r, "FGA"),
-                _get(r, "FG3M"),
-                _get(r, "FG3A"),
-                _get(r, "FTM"),
-                _get(r, "FTA"),
+                r.get("STL"),
+                r.get("BLK"),
+                r.get("TOV"),
+                r.get("PF"),
+                r.get("FGM"),
+                r.get("FGA"),
+                r.get("FG3M"),
+                r.get("FG3A"),
+                r.get("FTM"),
+                r.get("FTA"),
             )
         )
     conn.executemany(
