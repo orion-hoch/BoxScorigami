@@ -1,206 +1,555 @@
-"""Collect every NFL player-game stat line (1999 -> current) into SQLite.
-
-Batched: one load_player_stats + one load_schedules call covers every requested
-season at once (nflreadpy caches the per-season parquets locally), joined to
-attach game_id/date/matchup, then written one season at a time. Resumable —
-seasons already in seasons_done are skipped; re-run with --force to refresh.
-
-Usage:
-    python collect.py                # all seasons 1999 -> current
-    python collect.py --start 2020   # 2020 -> current
-    python collect.py --season 2024  # only 2024
-    python collect.py --force        # re-pull seasons already marked done
-"""
+"""Scrape NFL player-game box scores from Pro-Football-Reference into nfl_full.sqlite."""
 import argparse
+import datetime as dt
+import re
 import sqlite3
 import sys
+import time
+from collections import deque
 from pathlib import Path
 
-import nflreadpy as nfl
-import polars as pl
+from bs4 import BeautifulSoup, Comment
+from patchright.sync_api import sync_playwright
 
-DB_PATH = Path(__file__).resolve().parent / "nfl.sqlite"
+HERE = Path(__file__).resolve().parent
+DB_PATH = HERE / "nfl_full.sqlite"
+USER_DATA_DIR = HERE / ".browser_profile"
 
-# (db_col, source_col) — every stat we expose as a possible cube axis.
-STAT_COLUMNS = [
-    ("pass_cmp",  "completions"),
-    ("pass_att",  "attempts"),
-    ("pass_yds",  "passing_yards"),
-    ("pass_td",   "passing_tds"),
-    ("pass_int",  "passing_interceptions"),
-    ("sacks",     "sacks_suffered"),
-    ("rush_att",  "carries"),
-    ("rush_yds",  "rushing_yards"),
-    ("rush_td",   "rushing_tds"),
-    ("rec",       "receptions"),
-    ("tgt",       "targets"),
-    ("rec_yds",   "receiving_yards"),
-    ("rec_td",    "receiving_tds"),
-]
+BASE = "https://www.pro-football-reference.com"
+DEFAULT_DELAY = 5.0
+CF_CHALLENGE_TIMEOUT = 60
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    stat_cols_sql = ",\n            ".join(f"{c} INTEGER" for c, _ in STAT_COLUMNS)
-    conn.executescript(
-        f"""
-        CREATE TABLE IF NOT EXISTS player_games (
-            game_id        TEXT NOT NULL,
-            game_date      TEXT,
-            season         TEXT,
-            season_type    TEXT,
-            week           INTEGER,
-            player_id      TEXT NOT NULL,
-            player_name    TEXT,
-            position       TEXT,
-            team_abbr      TEXT,
-            opponent       TEXT,
-            matchup        TEXT,
-            {stat_cols_sql},
-            PRIMARY KEY (game_id, player_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_pg_player ON player_games(player_id);
-        CREATE INDEX IF NOT EXISTS idx_pg_season ON player_games(season);
-
-        CREATE TABLE IF NOT EXISTS seasons_done (
-            season       TEXT NOT NULL,
-            season_type  TEXT NOT NULL,
-            n_rows       INTEGER,
-            done_at      TEXT DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (season, season_type)
-        );
-        """
-    )
+def current_season() -> int:
+    today = dt.date.today()
+    return today.year if today.month >= 9 else today.year - 1
 
 
-def already_done(conn: sqlite3.Connection, season: str) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM seasons_done WHERE season=? AND season_type='ALL'",
-        (season,),
-    ).fetchone() is not None
+def open_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-def fetch_all(seasons: list[int]) -> pl.DataFrame:
-    """Load player stats + schedule join for every requested season in one pull.
+def init_db(conn):
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS games_to_scrape (
+        game_id      TEXT PRIMARY KEY,
+        game_date    TEXT,
+        season       INTEGER,
+        week         TEXT,
+        game_type    TEXT,
+        home_team    TEXT,
+        away_team    TEXT,
+        status       TEXT DEFAULT 'pending',
+        error_msg    TEXT,
+        scraped_at   TEXT
+    );
 
-    A player_stats row identifies its game by (season, week, team,
-    opponent_team). We build a (season, week, team, opponent_team) -> game_id
-    map from the schedule (one row per team per game) and left-join it on.
-    """
-    stats = nfl.load_player_stats(seasons=seasons)
-    sched = nfl.load_schedules(seasons=seasons)
-    cols = ["game_id", "season", "week", "gameday", "team", "opponent_team"]
-    home = sched.rename({"home_team": "team", "away_team": "opponent_team"}).select(cols)
-    away = sched.rename({"away_team": "team", "home_team": "opponent_team"}).select(cols)
-    keyed = pl.concat([home, away])  # one row per (game, team)
+    CREATE TABLE IF NOT EXISTS player_games (
+        game_id        TEXT NOT NULL,
+        game_date      TEXT,
+        season         INTEGER,
+        game_type      TEXT,
+        player_pfr_id  TEXT NOT NULL,
+        player_name    TEXT,
+        team_abbr      TEXT,
+        opponent       TEXT,
+        matchup        TEXT,
+        pass_cmp       INTEGER,
+        pass_att       INTEGER,
+        pass_yds       INTEGER,
+        pass_td        INTEGER,
+        pass_int       INTEGER,
+        sacks          INTEGER,
+        sack_yds       INTEGER,
+        rush_att       INTEGER,
+        rush_yds       INTEGER,
+        rush_td        INTEGER,
+        tgt            INTEGER,
+        rec            INTEGER,
+        rec_yds        INTEGER,
+        rec_td         INTEGER,
+        fumbles        INTEGER,
+        fumbles_lost   INTEGER,
+        PRIMARY KEY (game_id, player_pfr_id)
+    );
 
-    return stats.join(
-        keyed,
-        on=["season", "week", "team", "opponent_team"],
-        how="left",
-    )
+    CREATE INDEX IF NOT EXISTS idx_pg_season ON player_games(season);
+    CREATE INDEX IF NOT EXISTS idx_pg_player ON player_games(player_pfr_id);
+
+    CREATE TABLE IF NOT EXISTS seasons_enumerated (
+        season         INTEGER PRIMARY KEY,
+        n_games        INTEGER,
+        enumerated_at  TEXT
+    );
+    """)
 
 
-def rows_for_insert(df: pl.DataFrame):
-    """Yield tuples shaped for executemany INSERT."""
-    src_cols = [s for _, s in STAT_COLUMNS]
-    needed = ["game_id", "gameday", "season", "season_type", "week",
-              "player_id", "player_display_name", "position", "team",
-              "opponent_team"] + src_cols
-    # Some columns may be missing for very old seasons; fill with None.
-    for col in needed:
-        if col not in df.columns:
-            df = df.with_columns(pl.lit(None).alias(col))
+class Browser:
+    def __init__(self, restart_every=500):
+        self._pw = None
+        self._ctx = None
+        self._page = None
+        self._restart_every = restart_every
+        self._since_restart = 0
 
-    for r in df.iter_rows(named=True):
-        if r["game_id"] is None or r["player_id"] is None:
-            continue  # skip rows that didn't join (rare; usually pre-week roster moves)
-        matchup = f"{r['team']} vs {r['opponent_team']}" if r["team"] else None
-        stats = tuple(
-            int(r[s]) if r[s] is not None else 0
-            for s in src_cols
+    def __enter__(self):
+        self._pw = sync_playwright().start()
+        USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        self._clear_stale_locks()
+        self._open_context()
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self._ctx:
+                self._ctx.close()
+        finally:
+            if self._pw:
+                self._pw.stop()
+            self._clear_stale_locks()
+
+    @staticmethod
+    def _clear_stale_locks():
+        for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+            try:
+                (USER_DATA_DIR / name).unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+
+    def _open_context(self):
+        self._ctx = self._pw.chromium.launch_persistent_context(
+            user_data_dir=str(USER_DATA_DIR),
+            headless=False,
+            no_viewport=True,
         )
-        yield (
-            r["game_id"],
-            r["gameday"],
-            str(r["season"]) if r["season"] is not None else None,
-            r["season_type"],
-            r["week"],
-            r["player_id"],
-            r["player_display_name"] or r.get("player_name"),
-            r["position"],
-            r["team"],
-            r["opponent_team"],
-            matchup,
-            *stats,
+        self._page = self._ctx.new_page()
+        self._since_restart = 0
+
+    def _restart(self):
+        print(f"   [browser restart after {self._since_restart} pages]", file=sys.stderr)
+        try:
+            self._ctx.close()
+        except Exception:
+            pass
+        self._open_context()
+
+    def fetch(self, url, retries=2):
+        """Navigate, wait for Cloudflare to clear, return HTML."""
+        if self._since_restart >= self._restart_every:
+            self._restart()
+        for attempt in range(retries + 1):
+            try:
+                self._page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                deadline = time.time() + CF_CHALLENGE_TIMEOUT
+                while time.time() < deadline:
+                    title = self._page.title()
+                    if title and "Just a moment" not in title:
+                        break
+                    time.sleep(1)
+                else:
+                    raise RuntimeError("Cloudflare challenge did not clear")
+                self._since_restart += 1
+                return self._page.content()
+            except Exception as e:
+                if attempt == retries:
+                    raise
+                print(f"   retry {attempt+1}/{retries}: {e}", file=sys.stderr)
+                time.sleep(5 * (attempt + 1))
+
+
+GAME_LINK_RE = re.compile(r'/boxscores/(\d{8}0\w{3})\.htm')
+
+
+def parse_schedule_page(html, season):
+    soup = BeautifulSoup(html, "html.parser")
+    out = []
+    table = soup.find("table", id="games")
+    if not table:
+        for m in GAME_LINK_RE.finditer(html):
+            gid = m.group(1)
+            date_iso = f"{gid[:4]}-{gid[4:6]}-{gid[6:8]}"
+            out.append({
+                "game_id": gid, "game_date": date_iso, "season": season,
+                "week": None, "game_type": None,
+                "home_team": gid[-3:], "away_team": None,
+            })
+        return out
+
+    for tr in table.find("tbody").find_all("tr"):
+        if "thead" in (tr.get("class") or []):
+            continue
+        link = tr.find("a", href=GAME_LINK_RE)
+        if not link:
+            continue
+        gid = GAME_LINK_RE.search(link["href"]).group(1)
+        cells = {td.get("data-stat"): td for td in tr.find_all(["td", "th"])}
+        week = (cells.get("week_num") or {}).get_text(strip=True) if cells.get("week_num") else None
+        date_iso = (cells.get("game_date") or {}).get_text(strip=True) if cells.get("game_date") else None
+        if not date_iso:
+            date_iso = f"{gid[:4]}-{gid[4:6]}-{gid[6:8]}"
+        gtype = "POST" if (week and not week.isdigit()) else "REG"
+        winner = (cells.get("winner") or {}).get_text(strip=True) if cells.get("winner") else None
+        loser = (cells.get("loser") or {}).get_text(strip=True) if cells.get("loser") else None
+        at_cell = cells.get("game_location")
+        winner_was_away = at_cell and at_cell.get_text(strip=True) == "@"
+        if winner_was_away:
+            home_team, away_team = loser, winner
+        else:
+            home_team, away_team = winner, loser
+        out.append({
+            "game_id": gid, "game_date": date_iso, "season": season,
+            "week": week, "game_type": gtype,
+            "home_team": home_team, "away_team": away_team,
+        })
+    return out
+
+
+def enumerate_seasons(conn, browser, start, end, delay, refresh=False):
+    cur = conn.cursor()
+    for season in range(start, end + 1):
+        already = cur.execute(
+            "SELECT n_games FROM seasons_enumerated WHERE season=?", (season,)
+        ).fetchone()
+        if already and not refresh:
+            print(f"[skip] {season} already enumerated ({already[0]} games)")
+            continue
+        url = f"{BASE}/years/{season}/games.htm"
+        print(f"[fetch] {url}")
+        try:
+            html = browser.fetch(url)
+        except Exception as e:
+            print(f"  ERROR: {e}", file=sys.stderr)
+            time.sleep(delay)
+            continue
+        games = parse_schedule_page(html, season)
+        cur.executemany(
+            """INSERT OR IGNORE INTO games_to_scrape
+               (game_id, game_date, season, week, game_type, home_team, away_team)
+               VALUES (:game_id, :game_date, :season, :week, :game_type, :home_team, :away_team)""",
+            games,
         )
+        cur.execute(
+            "INSERT OR REPLACE INTO seasons_enumerated (season, n_games, enumerated_at) "
+            "VALUES (?, ?, ?)",
+            (season, len(games), dt.datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        print(f"  -> {len(games)} games")
+        time.sleep(delay)
 
 
-def insert_season(conn: sqlite3.Connection, df: pl.DataFrame) -> int:
-    cols_sql = ", ".join(c for c, _ in STAT_COLUMNS)
-    placeholders = ", ".join("?" for _ in STAT_COLUMNS)
-    sql = (
-        f"INSERT OR REPLACE INTO player_games "
-        f"(game_id, game_date, season, season_type, week, "
-        f" player_id, player_name, position, team_abbr, opponent, matchup, "
-        f" {cols_sql}) "
-        f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {placeholders})"
-    )
-    n = 0
+def extract_player_offense(html):
+    """One dict per player from the player_offense table."""
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.find("table", id="player_offense")
+    if not table:
+        for c in soup.find_all(string=lambda t: isinstance(t, Comment)):
+            if "player_offense" in c:
+                inner = BeautifulSoup(c, "html.parser")
+                table = inner.find("table", id="player_offense")
+                if table:
+                    break
+    if not table:
+        return []
+
+    rows = []
+    for tr in table.find("tbody").find_all("tr"):
+        if "thead" in (tr.get("class") or []):
+            continue
+        link = tr.find("th", {"data-stat": "player"})
+        if not link:
+            continue
+        a = link.find("a")
+        if not a:
+            continue
+        href = a.get("href", "")
+        m = re.search(r"/players/[A-Z]/([A-Za-z0-9.\-]+)\.htm", href)
+        if not m:
+            continue
+        pfr_id = m.group(1)
+        name = a.get_text(strip=True)
+
+        cells = {td.get("data-stat"): td.get_text(strip=True) for td in tr.find_all("td")}
+
+        def i(key):
+            v = cells.get(key, "")
+            if v in ("", None):
+                return None
+            try:
+                return int(v)
+            except ValueError:
+                try:
+                    return int(float(v))
+                except ValueError:
+                    return None
+
+        rows.append({
+            "player_pfr_id": pfr_id,
+            "player_name": name,
+            "team_abbr": cells.get("team", "") or None,
+            "pass_cmp": i("pass_cmp"),
+            "pass_att": i("pass_att"),
+            "pass_yds": i("pass_yds"),
+            "pass_td":  i("pass_td"),
+            "pass_int": i("pass_int"),
+            "sacks":    i("pass_sacked"),
+            "sack_yds": i("pass_sacked_yds"),
+            "rush_att": i("rush_att"),
+            "rush_yds": i("rush_yds"),
+            "rush_td":  i("rush_td"),
+            "tgt":      i("targets"),
+            "rec":      i("rec"),
+            "rec_yds":  i("rec_yds"),
+            "rec_td":   i("rec_td"),
+            "fumbles":      i("fumbles"),
+            "fumbles_lost": i("fumbles_lost"),
+        })
+    return rows
+
+
+def insert_player_rows(conn, game, players):
+    if not players:
+        return 0
+    teams = sorted({p["team_abbr"] for p in players if p["team_abbr"]})
+    opp_of = {teams[0]: teams[1], teams[1]: teams[0]} if len(teams) == 2 else {}
+    sql = """
+    INSERT OR REPLACE INTO player_games (
+        game_id, game_date, season, game_type,
+        player_pfr_id, player_name, team_abbr, opponent, matchup,
+        pass_cmp, pass_att, pass_yds, pass_td, pass_int,
+        sacks, sack_yds,
+        rush_att, rush_yds, rush_td,
+        tgt, rec, rec_yds, rec_td,
+        fumbles, fumbles_lost
+    ) VALUES (
+        :game_id, :game_date, :season, :game_type,
+        :player_pfr_id, :player_name, :team_abbr, :opponent, :matchup,
+        :pass_cmp, :pass_att, :pass_yds, :pass_td, :pass_int,
+        :sacks, :sack_yds,
+        :rush_att, :rush_yds, :rush_td,
+        :tgt, :rec, :rec_yds, :rec_td,
+        :fumbles, :fumbles_lost
+    )"""
     batch = []
-    for row in rows_for_insert(df):
-        batch.append(row)
-        if len(batch) >= 1000:
-            conn.executemany(sql, batch)
-            n += len(batch)
-            batch = []
-    if batch:
-        conn.executemany(sql, batch)
-        n += len(batch)
+    for p in players:
+        team = p["team_abbr"]
+        opp = opp_of.get(team)
+        matchup = f"{team} vs {opp}" if team and opp else None
+        batch.append({
+            **p,
+            "game_id": game["game_id"],
+            "game_date": game["game_date"],
+            "season": game["season"],
+            "game_type": game["game_type"],
+            "opponent": opp,
+            "matchup": matchup,
+        })
+    conn.executemany(sql, batch)
+    return len(batch)
+
+
+def scrape_games(conn, browser, start, end, retry_failed, delay):
+    where = "status = 'pending'"
+    if retry_failed:
+        where = "status IN ('pending','error')"
+    if start is not None:
+        where += f" AND season >= {start}"
+    if end is not None:
+        where += f" AND season <= {end}"
+
+    games = conn.execute(
+        f"SELECT * FROM games_to_scrape WHERE {where} ORDER BY season, game_date, game_id"
+    ).fetchall()
+    if not games:
+        print("Nothing to scrape.")
+        return
+
+    total = len(games)
+    print(f"Scraping {total:,} games...")
+    t0 = time.time()
+    success = 0
+    fail = 0
+    recent = deque(maxlen=30)
+    for i, g in enumerate(games, 1):
+        url = f"{BASE}/boxscores/{g['game_id']}.htm"
+        t_start = time.time()
+        try:
+            html = browser.fetch(url)
+            players = extract_player_offense(html)
+            n = insert_player_rows(conn, dict(g), players)
+            conn.execute(
+                "UPDATE games_to_scrape SET status='done', error_msg=NULL, scraped_at=? WHERE game_id=?",
+                (dt.datetime.utcnow().isoformat(), g["game_id"]),
+            )
+            conn.commit()
+            success += 1
+            recent.append(time.time() - t_start + delay)
+            avg = sum(recent) / len(recent)
+            eta_h = (total - i) * avg / 3600
+            print(f"[{i:>5}/{total}] {g['season']} {g['game_id']}  +{n} players  "
+                  f"(last30 avg {avg:.1f}s/game, eta {eta_h:.1f}h)")
+        except Exception as e:
+            conn.execute(
+                "UPDATE games_to_scrape SET status='error', error_msg=? WHERE game_id=?",
+                (str(e)[:500], g["game_id"]),
+            )
+            conn.commit()
+            fail += 1
+            print(f"[{i:>5}/{total}] {g['season']} {g['game_id']}  ERROR: {e}", file=sys.stderr)
+        time.sleep(delay)
+
+    print(f"\nDONE. {success:,} succeeded, {fail:,} failed in {(time.time()-t0)/3600:.1f}h")
+
+
+def recheck_empty_games(conn, browser, delay, start=None, end=None):
+    """Re-scrape 'done' games that produced zero player rows."""
+    where = "g.status = 'done'"
+    if start is not None:
+        where += f" AND g.season >= {start}"
+    if end is not None:
+        where += f" AND g.season <= {end}"
+
+    games = conn.execute(f"""
+        SELECT g.* FROM games_to_scrape g
+        LEFT JOIN (SELECT game_id, COUNT(*) AS n FROM player_games GROUP BY game_id) p
+          ON p.game_id = g.game_id
+        WHERE {where} AND COALESCE(p.n, 0) = 0
+        ORDER BY g.season, g.game_date, g.game_id
+    """).fetchall()
+    if not games:
+        print("\nRecheck: no zero-player 'done' games to recheck.")
+        return
+
+    print(f"\nRecheck: {len(games):,} games marked done but have 0 player rows. Re-scraping...")
+    fixed = 0
+    still_empty = 0
+    for i, g in enumerate(games, 1):
+        url = f"{BASE}/boxscores/{g['game_id']}.htm"
+        try:
+            html = browser.fetch(url)
+            players = extract_player_offense(html)
+            n = insert_player_rows(conn, dict(g), players)
+            if n > 0:
+                conn.execute(
+                    "UPDATE games_to_scrape SET status='done', error_msg=NULL, scraped_at=? WHERE game_id=?",
+                    (dt.datetime.utcnow().isoformat(), g["game_id"]),
+                )
+                fixed += 1
+                print(f"[{i:>4}/{len(games)}] {g['season']} {g['game_id']}  +{n} players (FIXED)")
+            else:
+                conn.execute(
+                    "UPDATE games_to_scrape SET status='empty', error_msg='no player_offense after recheck', scraped_at=? WHERE game_id=?",
+                    (dt.datetime.utcnow().isoformat(), g["game_id"]),
+                )
+                still_empty += 1
+                print(f"[{i:>4}/{len(games)}] {g['season']} {g['game_id']}  still 0 players -> 'empty'")
+            conn.commit()
+        except Exception as e:
+            print(f"[{i:>4}/{len(games)}] {g['season']} {g['game_id']}  RECHECK ERROR: {e}", file=sys.stderr)
+        time.sleep(delay)
+
+    print(f"\nRecheck done. fixed={fixed:,}  still_empty={still_empty:,}")
+
+
+def backfill_opponent(conn):
+    games = conn.execute("""
+        SELECT game_id, GROUP_CONCAT(DISTINCT team_abbr) AS teams
+        FROM player_games
+        WHERE team_abbr IS NOT NULL
+        GROUP BY game_id
+    """).fetchall()
+    print(f"scanning {len(games):,} games...")
+    fixed = weird = 0
+    for g in games:
+        teams = [t for t in (g["teams"] or "").split(",") if t]
+        if len(teams) != 2:
+            weird += 1
+            continue
+        a, b = teams
+        conn.execute(
+            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
+            (b, f"{a} vs {b}", g["game_id"], a),
+        )
+        conn.execute(
+            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
+            (a, f"{b} vs {a}", g["game_id"], b),
+        )
+        fixed += 1
     conn.commit()
-    return n
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM player_games WHERE matchup IS NULL"
+    ).fetchone()[0]
+    print(f"fixed {fixed:,} games  ({weird:,} skipped: not exactly 2 teams; "
+          f"{remaining:,} rows still NULL)")
+
+
+def show_stats(conn):
+    seas = conn.execute("SELECT COUNT(*) FROM seasons_enumerated").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM games_to_scrape").fetchone()[0]
+    done = conn.execute("SELECT COUNT(*) FROM games_to_scrape WHERE status='done'").fetchone()[0]
+    err = conn.execute("SELECT COUNT(*) FROM games_to_scrape WHERE status='error'").fetchone()[0]
+    pend = conn.execute("SELECT COUNT(*) FROM games_to_scrape WHERE status='pending'").fetchone()[0]
+    pg = conn.execute("SELECT COUNT(*) FROM player_games").fetchone()[0]
+    seas_range = conn.execute("SELECT MIN(season), MAX(season) FROM seasons_enumerated").fetchone()
+    print(f"seasons enumerated: {seas}  (range {seas_range[0]}–{seas_range[1]})")
+    print(f"games:              {total:,}  done={done:,}  error={err:,}  pending={pend:,}")
+    print(f"player rows:        {pg:,}")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--start", type=int, default=1999)
-    ap.add_argument("--end", type=int, default=nfl.get_current_season())
-    ap.add_argument("--season", type=int, help="run only this season (overrides start/end)")
-    ap.add_argument("--force", action="store_true", help="re-pull seasons already marked done")
-    args = ap.parse_args()
+    sub = ap.add_subparsers(dest="cmd", required=True)
 
-    conn = sqlite3.connect(DB_PATH)
+    e = sub.add_parser("enumerate", help="Phase A: pull game URLs from /years/YYYY/games.htm")
+    e.add_argument("--start", type=int, default=1933)
+    e.add_argument("--end", type=int, default=current_season())
+    e.add_argument("--refresh", action="store_true",
+                   help="re-enumerate seasons already done (picks up newly played games)")
+    e.add_argument("--delay", type=float, default=DEFAULT_DELAY)
+
+    s = sub.add_parser("scrape", help="Phase B: scrape each pending boxscore")
+    s.add_argument("--start", type=int)
+    s.add_argument("--end", type=int, default=current_season())
+    s.add_argument("--retry-failed", action="store_true")
+    s.add_argument("--no-recheck", action="store_true",
+                   help="skip the post-run recheck of zero-player 'done' games")
+    s.add_argument("--delay", type=float, default=DEFAULT_DELAY)
+
+    r = sub.add_parser("recheck", help="Re-scrape games marked done that produced 0 player rows")
+    r.add_argument("--start", type=int)
+    r.add_argument("--end", type=int)
+    r.add_argument("--delay", type=float, default=DEFAULT_DELAY)
+
+    sub.add_parser("backfill-opponent", help="Repair opponent/matchup from team_abbr (no network)")
+    sub.add_parser("stats", help="show progress")
+
+    args = ap.parse_args()
+    conn = open_db()
     init_db(conn)
 
-    requested = [args.season] if args.season else list(range(args.start, args.end + 1))
-    todo = [s for s in requested if args.force or not already_done(conn, str(s))]
+    if args.cmd == "stats":
+        show_stats(conn)
+        return
+    if args.cmd == "backfill-opponent":
+        backfill_opponent(conn)
+        return
 
-    if todo:
-        print(f"[fetch] {len(todo)} season(s) ({todo[0]}-{todo[-1]}) in one batched pull ...")
-        try:
-            df = fetch_all(todo)
-        except Exception as e:
-            print(f"  ERROR fetching {todo[0]}-{todo[-1]}: {e}", file=sys.stderr)
-            sys.exit(1)
-        # We pull REG + POST together; season_type comes from the player_stats
-        # column. seasons_done is keyed on the season (season_type='ALL') —
-        # split by season_type happens at query time, not here.
-        for season in todo:
-            n = insert_season(conn, df.filter(pl.col("season") == season))
-            conn.execute(
-                "INSERT OR REPLACE INTO seasons_done (season, season_type, n_rows) "
-                "VALUES (?, 'ALL', ?)",
-                (str(season), n),
-            )
-            conn.commit()
-            print(f"  -> {season}: {n:,} player-game rows")
-    else:
-        print("All requested seasons already collected (use --force to refresh).")
+    with Browser() as browser:
+        if args.cmd == "enumerate":
+            enumerate_seasons(conn, browser, args.start, args.end, args.delay,
+                              refresh=args.refresh)
+        elif args.cmd == "scrape":
+            scrape_games(conn, browser, args.start, args.end, args.retry_failed, args.delay)
+            if not args.no_recheck:
+                recheck_empty_games(conn, browser, args.delay, args.start, args.end)
+        elif args.cmd == "recheck":
+            recheck_empty_games(conn, browser, args.delay, args.start, args.end)
 
-    total = conn.execute("SELECT COUNT(*) FROM player_games").fetchone()[0]
-    seasons_n = conn.execute("SELECT COUNT(*) FROM seasons_done").fetchone()[0]
-    print(f"\nDONE. {total:,} total player-game rows across {seasons_n} seasons.")
-    print(f"DB: {DB_PATH}")
+    show_stats(conn)
 
 
 if __name__ == "__main__":

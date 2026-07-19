@@ -1,16 +1,3 @@
-"""Pre-generate static JSON for every C(13,3)=286 axis-stat combo.
-
-Produces a self-contained `public/nba/` directory that can be deployed to any
-static host. The viewer fetches these files directly — no backend at runtime.
-
-Two passes are written:
-    public/nba/tally/         per-game box-score scorigami
-    public/nba/tally-season/  per-game AVERAGES over a player-season
-                              (season total / games played, rounded)
-
-Run:
-    python3 nba/export_static.py
-"""
 import json
 import sys
 import time
@@ -19,18 +6,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from server import STATS, compute_payload, open_db, _validate_axes  # noqa: E402
+from server import STATS, SANITY_FILTER, compute_payload, open_db, _validate_axes  # noqa: E402
 
-# Regular season only — excludes Playoffs from the per-game averages.
 SEASON_TYPE = "Regular Season"
 
 
-# --- Season per-game-average tally (static export only) ----------------------
-# Each entry is a player-SEASON, valued by its per-game average for each stat:
-# round(SUM(stat) / games_played). Averages are derived once into a small
-# season_avg table so each combo query hits ~25k rows instead of the full
-# player_games scan. Each cell carries `gp` (games played by its top season) so
-# the UI can filter out injured/short seasons client-side, like the year filter.
 def build_season_avg(conn):
     avgs = ", ".join(
         f"CAST(ROUND(1.0 * SUM({s['col']}) / COUNT(*)) AS INT) AS {s['col']}"
@@ -42,7 +22,7 @@ def build_season_avg(conn):
         CREATE TABLE season_avg AS
         SELECT player_id, player_name, season, COUNT(*) AS gp, {avgs}
         FROM player_games
-        WHERE season_type = '{SEASON_TYPE}'
+        WHERE season_type = '{SEASON_TYPE}' AND {SANITY_FILTER}
         GROUP BY player_id, player_name, season
         """
     )
@@ -52,10 +32,9 @@ def build_season_avg(conn):
 def compute_payload_season(x, y, z, min_gp=None) -> str:
     _validate_axes(x, y, z)
     cx, cy, cz = STATS[x]["col"], STATS[y]["col"], STATS[z]["col"]
-    # When min_gp is set, exclude player-seasons below that games threshold from
-    # every query (tally counts, representative, recent list, leaderboard) so the
-    # season universe is fully consistent — short seasons are simply not present.
-    flt = f"WHERE gp >= {min_gp}" if min_gp else ""
+    flt = f"WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL"
+    if min_gp:
+        flt += f" AND gp >= {min_gp}"
     lead_flt = f"AND s.gp >= {min_gp}" if min_gp else ""
     conn = open_db()
 
@@ -94,8 +73,6 @@ def compute_payload_season(x, y, z, min_gp=None) -> str:
     else:
         max_x = max_y = max_z = 0
 
-    # Up to 5 most-recent (season DESC) player-seasons per repeated cell (n>=2),
-    # attached as `recent` for the detail panel's "Recent Seasons" list.
     recent_rows = conn.execute(
         f"""
         WITH counts AS (
@@ -167,14 +144,10 @@ TALLY_DIR.mkdir(parents=True, exist_ok=True)
 SEASON_DIR.mkdir(parents=True, exist_ok=True)
 SEASON_MIN_DIR.mkdir(parents=True, exist_ok=True)
 
-# Games threshold for the "Min Games" season dataset (tally-season-min). Seasons
-# below this are excluded before tallying. Must match MIN_GAMES_MIN in
-# public/index.html.
 MIN_GP = 20
 
 stats_keys = list(STATS.keys())
 
-# stats.json — drives the X/Y/Z dropdowns in the UI
 stats_payload = {
     "stats": [
         {"key": k, "label": STATS[k]["label"], "color": STATS[k]["color"]}

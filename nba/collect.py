@@ -1,14 +1,4 @@
-"""Collect every player-game PRA line (1950-51 -> current) into SQLite.
-
-Uses nba_api's LeagueGameLog with PlayerOrTeam='P'. One request per
-(season, season_type). Resumable: skips (season, season_type) pairs
-already marked done in the seasons_done table.
-
-Usage:
-    python collect.py              # full run, 1950-51 -> 2025-26
-    python collect.py --start 2024 # start at season beginning 2024-25
-    python collect.py --season 2024-25 --season-type "Regular Season"
-"""
+"""Fetch NBA player-game box scores into nba.sqlite."""
 import argparse
 import sqlite3
 import time
@@ -18,7 +8,7 @@ from nba_api.stats.endpoints import leaguegamelog
 from nba_api.stats.library.parameters import PlayerOrTeamAbbreviation, SeasonTypePlayoffs
 
 DB_PATH = Path(__file__).resolve().parent / "nba.sqlite"
-REQUEST_PAUSE_SEC = 0.7  # be polite to stats.nba.com
+REQUEST_PAUSE_SEC = 0.7
 RETRY_MAX = 4
 SEASON_TYPES = [SeasonTypePlayoffs.regular, SeasonTypePlayoffs.playoffs]
 
@@ -76,7 +66,6 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    # Migrate older DBs that pre-date the extra stat columns.
     existing = {row[1] for row in conn.execute("PRAGMA table_info(player_games)")}
     for col in STAT_COLUMNS:
         if col not in existing:
@@ -85,7 +74,6 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def fetch_season(season: str, season_type: str):
-    """Return list of row dicts. Retries on transient failure."""
     last_err = None
     for attempt in range(RETRY_MAX):
         try:
@@ -99,7 +87,7 @@ def fetch_season(season: str, season_type: str):
             headers = ds["headers"]
             rows = ds["data"]
             return [dict(zip(headers, r)) for r in rows]
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_err = e
             wait = 2 ** attempt
             print(f"  ! {season} {season_type} attempt {attempt + 1} failed: {e}; sleeping {wait}s")
@@ -115,8 +103,6 @@ def upsert_rows(conn: sqlite3.Connection, season: str, season_type: str, rows: l
         ast = r.get("AST")
         if pts is None and reb is None and ast is None:
             continue
-        # Skip DNP rows: MIN is recorded and equals 0. NULL MIN is kept
-        # (early eras don't track minutes but only list players who played).
         minutes = r.get("MIN")
         if minutes is not None and float(minutes) == 0:
             continue

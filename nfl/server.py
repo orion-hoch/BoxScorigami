@@ -1,18 +1,6 @@
-"""Tiny stdlib HTTP server: static files + live tally endpoint for NFL.
-
-GET /                          -> JSON describing this dev API (viewer lives in /public)
-GET /<file>                    -> static file from this directory
-GET /stats                     -> JSON list of valid stat axes
-GET /tally?x=pass_yds&y=pass_td&z=rush_yds  -> tally cells + leaderboard
-
-Run:
-    python3 nfl/server.py [--port 8766]
-
-The server queries nfl.sqlite directly with window functions so any
-3-stat combo is computed on demand. Mirror of nba/server.py.
-"""
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from functools import lru_cache
@@ -21,13 +9,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
-DB_PATH = HERE / "nfl.sqlite"
-# Historical PFR-scraped DB (1933-1998). Optional — if present, it's merged
-# into a unified `player_games` view via ATTACH. Built by collect_historical.py.
-HIST_DB_PATH = HERE / "nfl_full.sqlite"
+DB_PATH = HERE / "nfl_full.sqlite"
 
-# Allow-list of stat columns we expose. Keys are the URL/file identifiers,
-# col is the SQLite column, label is what the UI shows.
 STATS = {
     "pass_cmp": {"col": "pass_cmp", "label": "Pass Cmp",      "color": "#ff6b6b"},
     "pass_att": {"col": "pass_att", "label": "Pass Att",      "color": "#ff8e8e"},
@@ -44,52 +27,51 @@ STATS = {
     "rec_td":   {"col": "rec_td",   "label": "Rec TD",        "color": "#4dd0e1"},
 }
 
+SANITY_BAD = [
+    "pass_cmp > pass_att",
+    "pass_cmp + pass_int > pass_att",
+    "pass_td > pass_cmp",
+    "pass_cmp = 0 AND pass_yds <> 0",
+    "rush_td > rush_att",
+    "rush_att = 0 AND rush_yds <> 0",
+    "rec > tgt",
+    "rec_td > rec",
+    "rec = 0 AND rec_yds <> 0",
+] + [f"{c} < 0" for c in ("pass_cmp", "pass_att", "pass_td", "pass_int",
+                          "sacks", "rush_att", "rush_td", "rec", "tgt", "rec_td")]
+SANITY_FILTER = "NOT (" + " OR ".join(f"IFNULL(({c}), 0)" for c in SANITY_BAD) + ")"
+
 
 def open_db() -> sqlite3.Connection:
+    if not os.path.exists(DB_PATH):
+        print(
+            f"ERROR: {DB_PATH} not found. Run collect.py first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    # If the historical PFR DB exists, attach it and build a TEMP VIEW that
-    # unions both eras into a single `player_games_unified` table. Queries
-    # below transparently use the union when available, fall back to the
-    # nflverse-only table when not.
-    if HIST_DB_PATH.exists():
-        conn.execute(f"ATTACH DATABASE '{HIST_DB_PATH}' AS hist")
-        conn.execute("""
-            CREATE TEMP VIEW player_games_unified AS
-            SELECT
-                game_id, game_date, CAST(season AS INTEGER) AS season,
-                player_id AS player_uid,
-                player_name, team_abbr, opponent, matchup,
-                pass_cmp, pass_att, pass_yds, pass_td, pass_int, sacks,
-                rush_att, rush_yds, rush_td,
-                tgt, rec, rec_yds, rec_td,
-                'nflverse' AS source
-            FROM main.player_games
-            UNION ALL
-            SELECT
-                game_id, game_date, season,
-                player_pfr_id AS player_uid,
-                player_name, team_abbr, opponent, matchup,
-                pass_cmp, pass_att, pass_yds, pass_td, pass_int, sacks,
-                rush_att, rush_yds, rush_td,
-                tgt, rec, rec_yds, rec_td,
-                'pfr' AS source
-            FROM hist.player_games
-        """)
-    else:
-        # No historical data — shadow the unified name with a passthrough.
-        conn.execute("""
-            CREATE TEMP VIEW player_games_unified AS
-            SELECT
-                game_id, game_date, CAST(season AS INTEGER) AS season,
-                player_id AS player_uid,
-                player_name, team_abbr, opponent, matchup,
-                pass_cmp, pass_att, pass_yds, pass_td, pass_int, sacks,
-                rush_att, rush_yds, rush_td,
-                tgt, rec, rec_yds, rec_td,
-                'nflverse' AS source
-            FROM player_games
-        """)
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='player_games'"
+    ).fetchone()
+    if not has_table:
+        print(
+            f"ERROR: {DB_PATH} has no player_games table. Run "
+            f"collect.py first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    conn.execute("""
+        CREATE TEMP VIEW player_games_unified AS
+        SELECT
+            game_id, game_date, season,
+            player_pfr_id AS player_uid,
+            player_name, team_abbr, opponent, matchup,
+            pass_cmp, pass_att, pass_yds, pass_td, pass_int, sacks,
+            rush_att, rush_yds, rush_td,
+            tgt, rec, rec_yds, rec_td
+        FROM player_games
+    """)
     return conn
 
 
@@ -103,11 +85,7 @@ def _validate_axes(x: str, y: str, z: str):
 
 @lru_cache(maxsize=64)
 def compute_payload(x: str, y: str, z: str) -> str:
-    """Return JSON string for a given axis trio. Cached in-memory."""
     _validate_axes(x, y, z)
-    # Wrap each column in MAX(col, 0) to clamp negative yardage (sack losses,
-    # negative receiving/rushing) up to 0. The cube viewer assumes non-negative
-    # axis coords; the affected rows (~1% in NFL) collapse into the 0-cell.
     cx = f"MAX({STATS[x]['col']}, 0)"
     cy = f"MAX({STATS[y]['col']}, 0)"
     cz = f"MAX({STATS[z]['col']}, 0)"
@@ -123,6 +101,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
                    MAX(game_date) AS last_date
             FROM player_games_unified
             WHERE {raw_cx} IS NOT NULL AND {raw_cy} IS NOT NULL AND {raw_cz} IS NOT NULL
+              AND {SANITY_FILTER}
             GROUP BY {cx}, {cy}, {cz}
         ),
         latest AS (
@@ -134,6 +113,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
                    ) AS rn
             FROM player_games_unified
             WHERE {raw_cx} IS NOT NULL AND {raw_cy} IS NOT NULL AND {raw_cz} IS NOT NULL
+              AND {SANITY_FILTER}
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,
                l.player_uid, l.player_name, l.team_abbr, l.matchup, l.game_id,
@@ -145,9 +125,6 @@ def compute_payload(x: str, y: str, z: str) -> str:
         """
     ).fetchall()
 
-    # Rows arrive grouped by cell (ORDER BY x,y,z,rn). The rn=1 row is the
-    # headline occurrence (keeps existing fields/filters intact); repeated cells
-    # (n>=2) also get the full up-to-5 list as `recent` for the detail panel.
     cells = []
     cur = None
     for r in rows:
@@ -178,13 +155,14 @@ def compute_payload(x: str, y: str, z: str) -> str:
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
             FROM player_games_unified
             WHERE {raw_cx} IS NOT NULL AND {raw_cy} IS NOT NULL AND {raw_cz} IS NOT NULL
+              AND {SANITY_FILTER}
             GROUP BY {cx}, {cy}, {cz}
         )
         SELECT p.player_uid AS player_id, p.player_name, COUNT(*) AS unique_cells
         FROM player_games_unified p
         JOIN counts c
           ON MAX(p.{raw_cx}, 0) = c.x AND MAX(p.{raw_cy}, 0) = c.y AND MAX(p.{raw_cz}, 0) = c.z
-        WHERE c.n = 1
+        WHERE c.n = 1 AND {SANITY_FILTER}
         GROUP BY p.player_uid, p.player_name
         ORDER BY unique_cells DESC, p.player_name
         LIMIT 50
@@ -249,8 +227,6 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send_error_json(500, f"db error: {e}")
             self._send_json(payload)
             return
-        # No HTML viewer here — the unified site lives in /public. This dev
-        # server only exposes the live JSON API.
         if url.path in ("/", ""):
             self._send_json(json.dumps({
                 "service": "nfl scorigami dev API",
@@ -271,7 +247,10 @@ def main():
     args = ap.parse_args()
 
     if not DB_PATH.exists():
-        print(f"ERROR: {DB_PATH} not found. Run collect.py first.", file=sys.stderr)
+        print(
+            f"ERROR: {DB_PATH} not found. Run collect.py first.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)

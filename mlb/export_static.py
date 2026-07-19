@@ -1,8 +1,3 @@
-"""Pre-generate static JSON for every C(10,3)=120 MLB axis-stat combo.
-
-Writes into the unified deploy folder at <repo>/public/mlb/.
-Run after collect.py.
-"""
 import json
 import sys
 import time
@@ -11,15 +6,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from server import STATS, compute_payload, open_db, _validate_axes  # noqa: E402
+from server import STATS, SANITY_FILTER, compute_payload, open_db, _validate_axes  # noqa: E402
 
-
-# --- Season-totals tally (static export only) --------------------------------
-# Each entry is a player-SEASON total instead of a single game. Stats are summed
-# per (player_id, season), regular season only ('R' — excludes spring training,
-# playoffs, All-Star), then the (sumX, sumY, sumZ) line is tallied across all
-# player-seasons. A small season_totals table is derived once so each combo
-# query hits ~50k rows instead of re-scanning the 5M-row player_games.
 def build_season_totals(conn):
     sums = ", ".join(f"SUM({s['col']}) AS {s['col']}" for s in STATS.values())
     conn.execute("DROP TABLE IF EXISTS season_totals")
@@ -28,7 +16,7 @@ def build_season_totals(conn):
         CREATE TABLE season_totals AS
         SELECT player_id, player_name, season, {sums}
         FROM player_games
-        WHERE game_type = 'R'
+        WHERE game_type = 'R' AND {SANITY_FILTER}
         GROUP BY player_id, player_name, season
         """
     )
@@ -38,13 +26,14 @@ def build_season_totals(conn):
 def compute_payload_season(x, y, z) -> str:
     _validate_axes(x, y, z)
     cx, cy, cz = STATS[x]["col"], STATS[y]["col"], STATS[z]["col"]
+    flt = f"WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL"
     conn = open_db()
 
     rows = conn.execute(
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
-            FROM season_totals GROUP BY {cx}, {cy}, {cz}
+            FROM season_totals {flt} GROUP BY {cx}, {cy}, {cz}
         ),
         latest AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, player_id, player_name, season,
@@ -52,7 +41,7 @@ def compute_payload_season(x, y, z) -> str:
                        PARTITION BY {cx}, {cy}, {cz}
                        ORDER BY season DESC, player_name
                    ) AS rn
-            FROM season_totals
+            FROM season_totals {flt}
         )
         SELECT c.x, c.y, c.z, c.n, l.player_id, l.player_name, l.season
         FROM counts c
@@ -74,13 +63,11 @@ def compute_payload_season(x, y, z) -> str:
     else:
         max_x = max_y = max_z = 0
 
-    # Up to 5 most-recent (season DESC) player-seasons per repeated cell (n>=2),
-    # attached as `recent` for the detail panel's "Recent Seasons" list.
     recent_rows = conn.execute(
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
-            FROM season_totals GROUP BY {cx}, {cy}, {cz}
+            FROM season_totals {flt} GROUP BY {cx}, {cy}, {cz}
         ),
         recent AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, player_id, player_name, season,
@@ -88,7 +75,7 @@ def compute_payload_season(x, y, z) -> str:
                        PARTITION BY {cx}, {cy}, {cz}
                        ORDER BY season DESC, player_name
                    ) AS rn
-            FROM season_totals
+            FROM season_totals {flt}
         )
         SELECT r.x, r.y, r.z, r.player_id, r.player_name, r.season
         FROM recent r
@@ -110,7 +97,7 @@ def compute_payload_season(x, y, z) -> str:
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
-            FROM season_totals GROUP BY {cx}, {cy}, {cz}
+            FROM season_totals {flt} GROUP BY {cx}, {cy}, {cz}
         )
         SELECT s.player_id, s.player_name, COUNT(*) AS unique_cells
         FROM season_totals s
@@ -137,9 +124,6 @@ def compute_payload_season(x, y, z) -> str:
     }
     return json.dumps(payload, separators=(",", ":"))
 
-
-# Rebuild the materialized season-totals table so the season export reflects
-# the current player_games data.
 print("building season_totals table ...")
 build_season_totals(open_db())
 

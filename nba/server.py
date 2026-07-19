@@ -1,16 +1,3 @@
-"""Tiny stdlib HTTP server: static files + live tally endpoint.
-
-GET /                          -> JSON describing this dev API (viewer lives in /public)
-GET /<file>                    -> static file from this directory
-GET /stats                     -> JSON list of valid stat axes
-GET /tally?x=pts&y=reb&z=ast   -> tally cells + leaderboard for the chosen axes
-
-Run:
-    python3 nba/server.py [--port 8765]
-
-The server queries nba.sqlite directly with window functions so any
-3-stat combo is computed on demand. Typical response < 1s on a laptop.
-"""
 import argparse
 import json
 import sqlite3
@@ -23,8 +10,6 @@ from urllib.parse import parse_qs, urlparse
 HERE = Path(__file__).resolve().parent
 DB_PATH = HERE / "nba.sqlite"
 
-# Allow-list of stat columns we expose. Keys map UI labels to DB columns;
-# the labels are what the dropdown sends back as the axis identifier.
 STATS = {
     "pts":  {"col": "pts",  "label": "Points",          "color": "#ff6b6b"},
     "reb":  {"col": "reb",  "label": "Rebounds",        "color": "#6bd06b"},
@@ -40,6 +25,18 @@ STATS = {
     "ftm":  {"col": "ftm",  "label": "FT Made",         "color": "#8ee27a"},
     "fta":  {"col": "fta",  "label": "FT Attempts",     "color": "#b9ec9f"},
 }
+
+
+SANITY_BAD = [
+    "fgm > fga",
+    "fg3m > fg3a",
+    "ftm > fta",
+    "fg3m > fgm",
+    "fg3a > fga",
+    "pts <> 2*fgm + fg3m + ftm",
+    "pf > 7",
+] + [f"{s['col']} < 0" for s in STATS.values()]
+SANITY_FILTER = "NOT (" + " OR ".join(f"IFNULL(({c}), 0)" for c in SANITY_BAD) + ")"
 
 
 def open_db() -> sqlite3.Connection:
@@ -58,13 +55,10 @@ def _validate_axes(x: str, y: str, z: str):
 
 @lru_cache(maxsize=64)
 def compute_payload(x: str, y: str, z: str) -> str:
-    """Return JSON string for a given axis trio. Cached in-memory."""
     _validate_axes(x, y, z)
     cx, cy, cz = STATS[x]["col"], STATS[y]["col"], STATS[z]["col"]
     conn = open_db()
 
-    # Tally + most-recent occurrence per cell, in one query via window function.
-    # The PARTITION key for ROW_NUMBER must mirror the GROUP BY in `counts`.
     rows = conn.execute(
         f"""
         WITH counts AS (
@@ -74,6 +68,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
                    MAX(game_date) AS last_date
             FROM player_games
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
+              AND {SANITY_FILTER}
             GROUP BY {cx}, {cy}, {cz}
         ),
         latest AS (
@@ -85,6 +80,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
                    ) AS rn
             FROM player_games
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
+              AND {SANITY_FILTER}
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,
                l.player_id, l.player_name, l.team_abbr, l.matchup, l.game_id,
@@ -96,9 +92,6 @@ def compute_payload(x: str, y: str, z: str) -> str:
         """
     ).fetchall()
 
-    # Rows arrive grouped by cell (ORDER BY x,y,z,rn). The rn=1 row is the
-    # headline occurrence (keeps existing fields/filters intact); repeated cells
-    # (n>=2) also get the full up-to-5 list as `recent` for the detail panel.
     cells = []
     cur = None
     for r in rows:
@@ -116,7 +109,6 @@ def compute_payload(x: str, y: str, z: str) -> str:
                 "m": r["matchup"], "g": r["game_id"], "pid": r["player_id"],
             })
 
-    # Bounding box from the actual data
     if cells:
         max_x = max(c["p"] for c in cells)
         max_y = max(c["r"] for c in cells)
@@ -124,20 +116,20 @@ def compute_payload(x: str, y: str, z: str) -> str:
     else:
         max_x = max_y = max_z = 0
 
-    # Leaderboard: players with the most n=1 cells for THIS combo.
     leaders = conn.execute(
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
             FROM player_games
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
+              AND {SANITY_FILTER}
             GROUP BY {cx}, {cy}, {cz}
         )
         SELECT p.player_id, p.player_name, COUNT(*) AS unique_cells
         FROM player_games p
         JOIN counts c
           ON p.{cx} = c.x AND p.{cy} = c.y AND p.{cz} = c.z
-        WHERE c.n = 1
+        WHERE c.n = 1 AND {SANITY_FILTER}
         GROUP BY p.player_id, p.player_name
         ORDER BY unique_cells DESC, p.player_name
         LIMIT 50
@@ -154,7 +146,7 @@ def compute_payload(x: str, y: str, z: str) -> str:
             "y": {"key": y, "label": STATS[y]["label"], "color": STATS[y]["color"], "max": max_y},
             "z": {"key": z, "label": STATS[z]["label"], "color": STATS[z]["color"], "max": max_z},
         },
-        "max_pts": max_x, "max_reb": max_y, "max_ast": max_z,  # legacy keys
+        "max_pts": max_x, "max_reb": max_y, "max_ast": max_z,
         "cells": cells,
         "leaderboard": leaderboard,
     }
@@ -162,10 +154,8 @@ def compute_payload(x: str, y: str, z: str) -> str:
 
 
 class Handler(SimpleHTTPRequestHandler):
-    # Serve files from the nba/ directory regardless of cwd
     def translate_path(self, path):
         original = super().translate_path(path)
-        # SimpleHTTPRequestHandler serves relative to cwd; force HERE
         rel = Path(original).resolve().relative_to(Path.cwd().resolve())
         return str(HERE / rel)
 
@@ -204,8 +194,6 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._send_error_json(500, f"db error: {e}")
             self._send_json(payload)
             return
-        # No HTML viewer here — the unified site lives in /public. This dev
-        # server only exposes the live JSON API.
         if url.path in ("/", ""):
             return self._send_json(json.dumps({
                 "service": "nba scorigami dev API",
@@ -215,7 +203,6 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def log_message(self, fmt, *args):
-        # Quieter logging
         sys.stderr.write(f"[server] {self.address_string()} - {fmt % args}\n")
 
 

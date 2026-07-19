@@ -1,7 +1,7 @@
 # BoxScorigami
 
 Interactive 3D visualization of player-game stat lines across the NBA, NFL,
-and MLB. Pick any 3 stats for the X/Y/Z axes, rotate, peel layers, and click a
+MLB, and WNBA. Pick any 3 stats for the X/Y/Z axes, rotate, peel layers, and click a
 voxel to see the most recent game (or player-season) that produced that exact
 line, plus a leaderboard of who owns the most unique combos.
 
@@ -18,17 +18,23 @@ NBA_Cube/
 │   ├── boxscorigami.svg
 │   ├── nba/                #   stats.json, tally/ (per-game), tally-season/
 │   ├── nfl/                #   "
-│   └── mlb/                #   "
+│   ├── mlb/                #   "
+│   └── wnba/               #   "
 ├── nba/                    # NBA pipeline (nba_api)
 │   ├── collect.py          #   fetch player_games -> nba.sqlite
 │   ├── export_static.py    #   generate public/nba/ from the db
 │   ├── server.py           #   local dev JSON API (optional)
 │   └── nba.sqlite          #   gitignored
-├── nfl/                    # NFL pipeline -> nfl.sqlite, public/nfl/
-│   ├── collect.py          #   modern era (nflverse)
-│   ├── collect_historical.py  # 1933-1998 (Pro-Football-Reference) -> nfl_full.sqlite
+├── nfl/                    # NFL pipeline -> nfl_full.sqlite, public/nfl/
+│   ├── collect.py          #   scrape Pro-Football-Reference -> nfl_full.sqlite
+│   ├── export_static.py    #   generate public/nfl/ from the db
 │   └── server.py           #   ATTACHes nfl_full.sqlite for the full history
 ├── mlb/                    # MLB pipeline (MLB-StatsAPI) -> mlb.sqlite, public/mlb/
+├── wnba/                   # WNBA pipeline (nba_api)
+│   ├── collect.py          #   fetch player_games -> wnba.sqlite
+│   ├── export_static.py    #   generate public/wnba/ from the db
+│   ├── server.py           #   local dev JSON API (optional)
+│   └── wnba.sqlite          #   gitignored
 └── .gitignore
 ```
 

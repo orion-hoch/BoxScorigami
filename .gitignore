@@ -27,3 +27,6 @@ __pycache__/
 
 # Vercel local
 .vercel/
+
+# Claude Code local config (not part of the repo)
+.claude/

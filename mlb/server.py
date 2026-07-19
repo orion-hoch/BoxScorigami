@@ -1,14 +1,3 @@
-"""Tiny stdlib HTTP server: static files + live tally endpoint for MLB batting.
-
-GET /                          -> static files (the viewer lives in /public)
-GET /stats                     -> JSON list of valid stat axes
-GET /tally?x=ab&y=h&z=hr        -> tally cells + leaderboard
-
-Run:
-    python3 mlb/server.py [--port 8768]
-
-Mirror of nfl/server.py with MLB stat columns.
-"""
 import argparse
 import json
 import sqlite3
@@ -33,6 +22,13 @@ STATS = {
     "k":       {"col": "k",       "label": "Strikeouts", "color": "#bdbdbd"},
     "sb":      {"col": "sb",      "label": "Stolen Bases","color": "#5fd5ff"},
 }
+
+SANITY_BAD = [
+    "h > ab",
+    "doubles + triples + hr > h",
+    "h + k > ab",
+] + [f"{s['col']} < 0" for s in STATS.values()]
+SANITY_FILTER = "NOT (" + " OR ".join(f"IFNULL(({c}), 0)" for c in SANITY_BAD) + ")"
 
 
 def open_db() -> sqlite3.Connection:
@@ -64,6 +60,7 @@ def compute_payload(x, y, z) -> str:
                    MAX(game_date) AS last_date
             FROM player_games
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
+              AND {SANITY_FILTER}
             GROUP BY {cx}, {cy}, {cz}
         ),
         latest AS (
@@ -75,6 +72,7 @@ def compute_payload(x, y, z) -> str:
                    ) AS rn
             FROM player_games
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
+              AND {SANITY_FILTER}
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,
                l.player_id, l.player_name, l.team_abbr, l.matchup, l.game_id,
@@ -86,9 +84,6 @@ def compute_payload(x, y, z) -> str:
         """
     ).fetchall()
 
-    # Rows arrive grouped by cell (ORDER BY x,y,z,rn). The rn=1 row is the
-    # headline occurrence (keeps existing fields/filters intact); repeated cells
-    # (n>=2) also get the full up-to-5 list as `recent` for the detail panel.
     def _gid(v):
         return str(v) if v is not None else None
     cells = []
@@ -117,13 +112,14 @@ def compute_payload(x, y, z) -> str:
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
             FROM player_games
             WHERE {cx} IS NOT NULL AND {cy} IS NOT NULL AND {cz} IS NOT NULL
+              AND {SANITY_FILTER}
             GROUP BY {cx}, {cy}, {cz}
         )
         SELECT p.player_id, p.player_name, COUNT(*) AS unique_cells
         FROM player_games p
         JOIN counts c
           ON p.{cx} = c.x AND p.{cy} = c.y AND p.{cz} = c.z
-        WHERE c.n = 1
+        WHERE c.n = 1 AND {SANITY_FILTER}
         GROUP BY p.player_id, p.player_name
         ORDER BY unique_cells DESC, p.player_name
         LIMIT 50

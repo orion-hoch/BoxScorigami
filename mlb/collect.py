@@ -1,30 +1,4 @@
-"""MLB BoxScorigami — one script for the whole pipeline (collect → build → serve).
-
-Uses MLB-StatsAPI. Everything is resumable/idempotent and writes to mlb.sqlite.
-
-Adding a current season (fast, batched — recommended):
-    python collect.py season-batch --season 2026     # player_games + pitcher_games (full)
-    python collect.py game-positions --start 2026 --end 2026
-    python collect.py game-batting   --start 2026 --end 2026
-    python collect.py build                          # rebuild cube dumps for the site
-
-Commands:
-  collect (boxscore, legacy/full-history):
-    enumerate / scrape / all      schedule() + per-game boxscores
-    backfill-pitching             pitcher_games for already-scraped games
-    backfill-names                short names -> full names
-    backfill-positions            per-season most-played position
-  collect (batched, bulk gameLog — 100 players/call):
-    season-batch --season Y       player_games + pitcher_games (incl. wp/bk/won/sv/...)
-    game-positions [--start --end]  per-game fielding position
-    game-batting   [--start --end]  pa/ibb/cs/hbp/sf/sh/gidp/lob (for OBP etc.)
-    pitcher-extras [--start --end]  wp/bk/won/sv/bs/sho/cg (only needed for old
-                                    boxscore-scraped seasons; season-batch fills these)
-  build/serve:
-    build [--positions … --mode … --no-rebuild]   unified tables + per-position dumps
-    serve [--port 8777]           no-cache static dev server on public/
-    stats                         show progress
-"""
+"""Collect MLB player-game stats into mlb.sqlite and build the cube dumps."""
 import argparse
 import datetime as dt
 import gzip
@@ -40,11 +14,10 @@ import requests
 DB_PATH = Path(__file__).resolve().parent / "mlb.sqlite"
 OUT_ROOT = Path(__file__).resolve().parent.parent / "public" / "mlb"
 DEFAULT_DELAY = 0.5
-BULK_BATCH = 100   # players per bulk /people gameLog call
+BULK_BATCH = 100
 
 
 def _to_int(v):
-    """Parse an API stat value to int, or None when blank/missing."""
     if v in (None, "", "-", ".---", "-.--"):
         return None
     try:
@@ -52,10 +25,6 @@ def _to_int(v):
     except (ValueError, TypeError):
         return None
 
-# Map our cube/DB stat keys to the field names in MLB's raw boxscore JSON.
-# Used by the raw-API fallback that bypasses statsapi.boxscore_data() for
-# old games (pre-1920ish) where players lack a 'position' field and the
-# convenience wrapper KeyError's out.
 RAW_BATTING_FIELDS = [
     ("ab",      "atBats"),
     ("r",       "runs"),
@@ -69,9 +38,6 @@ RAW_BATTING_FIELDS = [
     ("sb",      "stolenBases"),
 ]
 
-# Pitching fields in the raw boxscore JSON, mirrored into the convenience
-# (boxscore_data) key names parse_pitchers reads. innings pitched is handled
-# separately because it needs the "6.2" -> 20-outs conversion.
 RAW_PITCHING_FIELDS = [
     ("h",  "hits"),
     ("r",  "runs"),
@@ -79,14 +45,13 @@ RAW_PITCHING_FIELDS = [
     ("bb", "baseOnBalls"),
     ("k",  "strikeOuts"),
     ("hr", "homeRuns"),
-    ("p",  "numberOfPitches"),   # ~1988+ only; absent -> empty
-    ("s",  "strikes"),           # ~1988+ only; absent -> empty
+    ("p",  "numberOfPitches"),
+    ("s",  "strikes"),
 ]
 
 
 def ip_to_outs(ip):
-    """Convert MLB innings-pitched notation to a clean integer of outs.
-    "6.2" -> 6*3 + 2 = 20 outs; "6.0"/"6" -> 18; "" / None -> None."""
+    """Convert innings-pitched notation ("6.2") to outs."""
     if ip in (None, "", "-"):
         return None
     s = str(ip)
@@ -100,15 +65,6 @@ def ip_to_outs(ip):
 
 
 def fetch_boxscore(game_id):
-    """Pull a boxscore. Tries statsapi.boxscore_data() first (rich format),
-    falls back to the raw /v1/game/{id}/boxscore endpoint when the wrapper
-    crashes — common for pre-1930 games where:
-      - 'position' or 'boxscoreName' fields are missing from the response
-        (the convenience wrapper KeyError's out)
-      - the wrapper's /v1.1/.../feed/live endpoint returns 500 (the raw
-        /v1/.../boxscore endpoint is a different URL that usually works)
-    If the fallback also fails, the original error is re-raised so the game
-    gets logged with a useful message."""
     try:
         return statsapi.boxscore_data(game_id)
     except Exception as primary:
@@ -119,15 +75,8 @@ def fetch_boxscore(game_id):
 
 
 def _boxscore_from_raw(game_id):
-    """Construct a boxscore_data-compatible dict from the raw API endpoint,
-    ignoring position info entirely. We only populate the keys parse_batters
-    + insert_game actually read."""
     url = f"https://statsapi.mlb.com/api/v1/game/{game_id}/boxscore"
     resp = requests.get(url, timeout=20)
-    # MLB's API returns 500 with a JSON error body for some games. If we
-    # parsed that body and proceeded, the empty result would look like a
-    # valid "no data" game; instead, fail loud so the scraper marks it
-    # 'error' (retryable) rather than 'done' (empty).
     resp.raise_for_status()
     raw = resp.json()
     out = {
@@ -144,8 +93,6 @@ def _boxscore_from_raw(game_id):
     for side in ("away", "home"):
         team = raw.get("teams", {}).get(side, {})
         players = team.get("players", {})
-        # team.batters is the batting order (player IDs). Older games may omit
-        # it; fall back to any player with batting stats present.
         ids = team.get("batters") or [
             int(k[2:]) for k, p in players.items()
             if (p.get("stats") or {}).get("batting")
@@ -162,7 +109,6 @@ def _boxscore_from_raw(game_id):
                 row[db_key] = "" if v is None else str(v)
             out[f"{side}Batters"].append(row)
 
-        # Pitchers — mirror the convenience-format keys parse_pitchers reads.
         pit_ids = team.get("pitchers") or [
             int(k[2:]) for k, p in players.items()
             if (p.get("stats") or {}).get("pitching")
@@ -181,10 +127,6 @@ def _boxscore_from_raw(game_id):
             out[f"{side}Pitchers"].append(row)
     return out
 
-# Batting stats exposed as cube axes. Keys are the cube/URL identifiers,
-# matched against the boxscore_data field names. Pitching is intentionally
-# separate (different domain — pitcher stat lines don't share a space with
-# hitter stat lines), to be added as its own cube later.
 STAT_COLUMNS = [
     ("ab",      "ab"),
     ("r",       "r"),
@@ -198,10 +140,6 @@ STAT_COLUMNS = [
     ("sb",      "sb"),
 ]
 
-# Pitching stats, stored in their own pitcher_games table (different domain —
-# pitcher lines don't share an axis space with hitter lines, so this becomes
-# its own cube). `outs` is innings-pitched as a clean integer; `p`/`s` (pitches
-# and strikes) only exist for ~1988+ games and are NULL before that.
 PITCH_COLUMNS = [
     ("k",    "k"),
     ("bb",   "bb"),
@@ -281,9 +219,6 @@ def init_db(conn):
         enumerated_at  TEXT
     );
 
-    -- Each player's most-played fielding position per season (from the people
-    -- yearByYear fielding endpoint). Lets the cube tag a player-season — and,
-    -- by extension, every game in that season — with one clean position.
     CREATE TABLE IF NOT EXISTS season_position (
         player_id  INTEGER NOT NULL,
         season     INTEGER NOT NULL,
@@ -291,8 +226,6 @@ def init_db(conn):
         PRIMARY KEY (player_id, season)
     );
 
-    -- Marks players already processed by backfill-positions (even those with no
-    -- fielding splits) so they aren't re-fetched every run.
     CREATE TABLE IF NOT EXISTS players_positioned (
         player_id  INTEGER PRIMARY KEY,
         status     TEXT,
@@ -303,10 +236,7 @@ def init_db(conn):
 
 
 def migrate_db(conn):
-    """Add the pitching-backfill tracking columns to a pre-existing DB and seed
-    them once. Without a marker, games that produce zero pitcher rows (old
-    seasons, empty boxscores) never leave the backfill queue and get re-fetched
-    on every run. Idempotent: only seeds on the run that first adds the column."""
+    """Add pitching-backfill tracking columns to an older DB."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(games_to_scrape)")}
     added = False
     if "pitch_status" not in cols:
@@ -317,8 +247,6 @@ def migrate_db(conn):
     if "pitch_scraped_at" not in cols:
         conn.execute("ALTER TABLE games_to_scrape ADD COLUMN pitch_scraped_at TEXT")
     if added:
-        # Anything that already has pitcher rows was clearly backfilled — mark it
-        # done so the new marker matches the old "NOT IN pitcher_games" behavior.
         n = conn.execute(
             "UPDATE games_to_scrape SET pitch_status='done' "
             "WHERE pitch_status IS NULL "
@@ -330,7 +258,6 @@ def migrate_db(conn):
 
 
 def enumerate_season(conn, season, delay):
-    """Pull game IDs for a season's regular + postseason games."""
     already = conn.execute(
         "SELECT n_games FROM seasons_enumerated WHERE season=?", (season,)
     ).fetchone()
@@ -350,7 +277,6 @@ def enumerate_season(conn, season, delay):
 
     rows = []
     for g in sched:
-        # game_type: R = regular, F = wildcard, D = division, L = league, W = world series
         if g.get('status') != 'Final':
             continue
         rows.append({
@@ -358,7 +284,6 @@ def enumerate_season(conn, season, delay):
             "game_date": g["game_date"],
             "season": season,
             "game_type": g.get("game_type"),
-            # Resolve abbreviations later from boxscore (schedule has full names only).
             "home_abbr": None,
             "away_abbr": None,
         })
@@ -380,14 +305,12 @@ def enumerate_season(conn, season, delay):
 
 
 def parse_batters(bd, side, team_abbr, opp_abbr):
-    """Yield row dicts for one team's batters."""
     batters = bd.get(f"{side}Batters", [])
     for b in batters:
         pid = b.get("personId")
         if not pid or "substitution" in b and b.get("substitution") and not b.get("ab"):
-            # Skip empty rows (header / total rows surface as substitution=True with no AB).
             pass
-        # Walk our axis stats and pull the int value (or 0 if missing).
+
         def i(key):
             v = b.get(key, "")
             if v in ("", None, "-"):
@@ -419,10 +342,9 @@ def parse_batters(bd, side, team_abbr, opp_abbr):
 
 
 def parse_pitchers(bd, side, team_abbr, opp_abbr):
-    """Yield row dicts for one team's pitchers."""
     for p in bd.get(f"{side}Pitchers", []):
         pid = p.get("personId")
-        if not pid:        # skips None and the API's personId=0 totals/header row
+        if not pid:
             continue
 
         def i(key):
@@ -500,7 +422,6 @@ def insert_game(conn, game, bd):
     if pitch_rows:
         conn.executemany(pitch_sql, pitch_rows)
 
-    # Persist the resolved abbreviations back so they're queryable without the boxscore.
     conn.execute(
         "UPDATE games_to_scrape SET home_abbr=?, away_abbr=? WHERE game_id=?",
         (home_abbr, away_abbr, game["game_id"]),
@@ -532,10 +453,6 @@ def scrape_games(conn, start, end, retry_failed, delay):
     fail = 0
     skipped = 0
     recent = deque(maxlen=30)
-    # Per-season empty-streak tracking. If a season produces this many
-    # zero-batter games in a row, we mark the rest of that season as 'empty'
-    # without burning API calls. MLB simply doesn't have batter-level data
-    # digitized for some old seasons (e.g. 1931).
     EMPTY_STREAK_LIMIT = 8
     empty_streak = 0
     current_season = None
@@ -547,7 +464,6 @@ def scrape_games(conn, start, end, retry_failed, delay):
             empty_streak = 0
             current_season = season
 
-        # Fast-skip games in known-dead seasons (no API call).
         if season in dead_seasons:
             conn.execute(
                 "UPDATE games_to_scrape SET status='empty', error_msg='season has no batter data', scraped_at=? WHERE game_id=?",
@@ -596,9 +512,6 @@ def scrape_games(conn, start, end, retry_failed, delay):
 
 
 def backfill_names(conn, delay):
-    """Replace boxscore short names ("Bregman") with full names ("Alex Bregman")
-    via MLB's batch people endpoint. Cheap: ~hundreds of ids per call, so all of
-    history resolves in a few hundred calls. Updates both batting + pitching."""
     ids = [r[0] for r in conn.execute(
         "SELECT DISTINCT player_id FROM ("
         "  SELECT player_id FROM player_games "
@@ -632,12 +545,7 @@ def backfill_names(conn, delay):
 
 
 def backfill_pitching(conn, start, end, delay, retry_failed=False):
-    """Fill pitcher_games for already-'done' games (their pitching wasn't stored
-    when first scraped). Re-fetches each boxscore — batting is re-written
-    idempotently (INSERT OR REPLACE) and pitching is added. Resumable via the
-    pitch_status marker: a game drops out once it's been processed, EVEN IF it
-    had no pitchers (so empty/old games aren't re-fetched every run). Pass
-    retry_failed to also re-attempt games whose last backfill errored."""
+    """Fill pitcher_games for games scraped before pitching was stored."""
     where = "status='done' AND pitch_status IS NULL"
     if retry_failed:
         where = "status='done' AND (pitch_status IS NULL OR pitch_status='error')"
@@ -664,8 +572,6 @@ def backfill_pitching(conn, start, end, delay, retry_failed=False):
         try:
             bd = fetch_boxscore(g["game_id"])
             _, npit = insert_game(conn, dict(g), bd)
-            # Mark processed regardless of pitcher count so a 0-pitcher game
-            # isn't re-fetched on the next run.
             conn.execute(
                 "UPDATE games_to_scrape SET pitch_status='done', pitch_error=NULL, "
                 "pitch_scraped_at=? WHERE game_id=?",
@@ -695,9 +601,8 @@ def backfill_pitching(conn, start, end, delay, retry_failed=False):
 
 
 def _season_positions_from_fielding(payload):
-    """From a yearByYear fielding stats payload, return {season(int): abbr},
-    picking each season's most-played (max games) fielding position."""
-    best = {}  # season -> (games, abbr)
+    """Return {season: most-played position abbr} from a fielding payload."""
+    best = {}
     try:
         splits = payload["stats"][0]["splits"]
     except (KeyError, IndexError, TypeError):
@@ -721,10 +626,6 @@ def _season_positions_from_fielding(payload):
 
 
 def backfill_positions(conn, delay, retry_failed=False):
-    """Record each player's per-season most-played fielding position via the
-    people yearByYear fielding endpoint — ONE call per player, no game re-scrape.
-    Resumable: players_positioned is marked for every processed player (even
-    those with no fielding splits) so they aren't re-fetched on the next run."""
     where = "pp.player_id IS NULL"
     if retry_failed:
         where = "(pp.player_id IS NULL OR pp.status='error')"
@@ -739,7 +640,7 @@ def backfill_positions(conn, delay, retry_failed=False):
         print("No players need position backfill.")
         return
 
-    BATCH = 100  # players per /people call; ~100 IDs keeps the URL well under limits
+    BATCH = 100
     total = len(players)
     nbatches = (total + BATCH - 1) // BATCH
     print(f"Backfilling season positions for {total:,} players in {nbatches:,} batches of {BATCH}...")
@@ -769,8 +670,6 @@ def backfill_positions(conn, delay, retry_failed=False):
                 "INSERT OR REPLACE INTO season_position (player_id, season, position) VALUES (?,?,?)",
                 sp_rows,
             )
-            # Mark EVERY requested id done — including any the API omitted (no
-            # fielding record) — so they don't get re-queued on the next run.
             conn.executemany(
                 "INSERT OR REPLACE INTO players_positioned (player_id, status, error_msg, fetched_at) "
                 "VALUES (?, 'done', NULL, ?)",
@@ -833,12 +732,7 @@ def show_stats(conn):
         print(f"  -> {pitch_err:,} games errored on pitching backfill: retry with `backfill-pitching --retry-failed`")
 
 
-# ============================================================================
-# season-batch — fill player_games + pitcher_games for a season via bulk
-# gameLogs (one /people call per 100 players) instead of per-game boxscores.
-# The pitching gameLog carries the full line, so pitcher_games is populated
-# COMPLETE (incl. wp/bk/won/sv/bs/sho/cg) — no separate backfill needed.
-# ============================================================================
+# ---------------- season-batch ----------------
 SB_GAME_TYPES = "R,D,L,W,F"
 SB_HIT_FIELDS = [
     ("ab", "atBats"), ("r", "runs"), ("h", "hits"), ("doubles", "doubles"),
@@ -956,9 +850,7 @@ def season_batch(conn, season, delay):
           f"rows, {len(games):,} games in {(time.time()-t0)/60:.1f}m")
 
 
-# ============================================================================
-# game-positions — per-game fielding position from the bulk fielding gameLog.
-# ============================================================================
+# ---------------- game-positions ----------------
 def _innings_to_outs(ip):
     if ip in (None, "", "-"):
         return 0
@@ -987,7 +879,7 @@ def gp_ensure_tables(conn):
 
 
 def gp_from_gamelog(person, valid_games):
-    """{game_id: (date, position)} keeping the max-innings position per game."""
+    """{game_id: (date, position)} keeping max-innings position."""
     try:
         splits = person["stats"][0]["splits"]
     except (KeyError, IndexError, TypeError):
@@ -1068,10 +960,7 @@ def game_positions(conn, start, end, delay, retry_failed=False):
     print(f"\nDONE positions. {grand_ok:,} player-seasons, {grand_rows:,} rows in {(time.time()-t0)/3600:.2f}h")
 
 
-# ============================================================================
-# game-batting — extended per-game batting events (pa/ibb/cs/hbp/sf/sh/gidp/lob)
-# that player_games lacks, needed for OBP etc. From the bulk hitting gameLog.
-# ============================================================================
+# ---------------- game-batting ----------------
 GB_FIELDS = [
     ("pa", "plateAppearances"), ("hbp", "hitByPitch"), ("ibb", "intentionalWalks"),
     ("sf", "sacFlies"), ("sh", "sacBunts"), ("gidp", "groundIntoDoublePlay"),
@@ -1172,11 +1061,7 @@ def game_batting(conn, start, end, delay, retry_failed=False):
     print(f"\nDONE. {grand_ok:,} player-seasons, {grand_rows:,} game-batting rows in {(time.time()-t0)/3600:.2f}h")
 
 
-# ============================================================================
-# pitcher-extras — wp/bk/won/sv/bs/sho/cg into pitcher_games (for DBs built by
-# the legacy boxscore scraper, which didn't capture them). season-batch already
-# fills these, so this is only needed for older per-game-scraped seasons.
-# ============================================================================
+# ---------------- pitcher-extras ----------------
 def pe_ensure_schema(conn):
     cols = {r[1] for r in conn.execute("PRAGMA table_info(pitcher_games)")}
     for c in ("wp", "bk", "won", "sv", "bs", "sho", "cg"):
@@ -1270,12 +1155,7 @@ def pitcher_extras(conn, start, end, delay, retry_failed=False):
     print(f"\nDONE. {grand_ok:,} pitcher-seasons, {grand_rows:,} rows in {(time.time()-t0)/3600:.2f}h")
 
 
-# ============================================================================
-# build — materialize game_unified / season_unified, then emit one distinct-
-# line dump per position+mode. The browser (index.html) rolls a dump up onto
-# any 3 axes; cube cells, recents, leaderboard, and W/L filter reconstruct
-# exactly. Rate stats are stored as scaled-integer bins (RATE_SCALE).
-# ============================================================================
+# ---------------- build ----------------
 RATE_SCALE = {
     "avg": (100, 2), "obp": (100, 2), "slg": (100, 2), "ops": (100, 2), "babip": (100, 2),
     "win_pct": (1000, 3), "strike_pct": (1000, 3), "whip": (100, 2),
@@ -1392,9 +1272,9 @@ PIT_COUNT_SEASON = PIT_COUNT_GAME + [
 ]
 PIT_RATE = [("win_pct", "Win%"), ("era", "ERA"), ("whip", "WHIP"),
             ("k9", "K/9"), ("kbb", "K:BB"), ("strike_pct", "Strike%")]
-# pos key -> (label, position abbr or None, domain)
 POSITIONS = {
     "all": ("All", None, "full"), "p": ("Pitcher", "P", "full"),
+    "pos": ("Position Players", None, "bat"),
     "c": ("Catcher", "C", "bat"), "1b": ("First Base", "1B", "bat"),
     "2b": ("Second Base", "2B", "bat"), "3b": ("Third Base", "3B", "bat"),
     "ss": ("Shortstop", "SS", "bat"), "lf": ("Left Field", "LF", "bat"),
@@ -1426,7 +1306,12 @@ def emit_dump(conn, poskey, mode):
     defs = axes_for(domain, mode)
     keys = [k for k, _ in defs]
     table = "game_unified" if mode == "game" else "season_unified"
-    where = "" if pos_abbr is None else f"WHERE position='{pos_abbr}'"
+    if poskey == "pos":
+        where = "WHERE COALESCE(position,'')!='P'"
+    elif pos_abbr is None:
+        where = ""
+    else:
+        where = f"WHERE position='{pos_abbr}'"
     wl = mode == "game" and domain == "full"
     part_cols = keys + (["won"] if wl else [])
     part = ",".join(part_cols)
@@ -1460,15 +1345,11 @@ def emit_dump(conn, poskey, mode):
             cur["r"].append([r["player_id"], r["player_name"], str(r["season"]), r["g"]])
     base = OUT_ROOT / poskey
     base.mkdir(parents=True, exist_ok=True)
-    # stats.json stays plain (tiny, loaded directly for the dropdowns). The dump
-    # is gzipped — the 'all'/'p' game dumps are 100-150 MB raw (pitching pitch
-    # counts barely collapse) and exceed GitHub's 100 MB file limit; gzip cuts
-    # them ~5x. The browser decompresses via DecompressionStream.
     (base / ("stats.json" if mode == "game" else "stats-season.json")).write_text(
         json.dumps(stats_json(defs), separators=(",", ":")))
     payload = json.dumps({"mode": mode, "axes": keys, "lines": lines}, separators=(",", ":"))
     stem = "game" if mode == "game" else "season"
-    (base / f"{stem}.json").unlink(missing_ok=True)   # remove any stale uncompressed dump
+    (base / f"{stem}.json").unlink(missing_ok=True)
     with gzip.open(base / f"{stem}.json.gz", "wt", encoding="utf-8") as fh:
         fh.write(payload)
     return len(lines)
@@ -1496,7 +1377,6 @@ def build_cubes(conn, positions, mode, no_rebuild):
 
 
 def serve(port):
-    """No-cache static dev server rooted at the deploy folder (public/)."""
     import http.server, socketserver, os
     os.chdir(OUT_ROOT.parent)
 
@@ -1548,7 +1428,6 @@ def main():
                       help="also re-attempt players whose last fetch errored")
     bpos.add_argument("--delay", type=float, default=DEFAULT_DELAY)
 
-    # --- batched collectors (bulk gameLog) ---
     sb = sub.add_parser("season-batch",
                         help="Fast season ingest: player_games + pitcher_games (full) via bulk gameLogs")
     sb.add_argument("--season", type=int, required=True)
@@ -1566,7 +1445,7 @@ def main():
         sp.add_argument("--delay", type=float, default=DEFAULT_DELAY)
 
     bc = sub.add_parser("build", help="Rebuild unified tables + emit position cube dumps")
-    bc.add_argument("--positions", default="all,p,c,1b,2b,3b,ss,lf,cf,rf,dh")
+    bc.add_argument("--positions", default="all,p,pos,c,1b,2b,3b,ss,lf,cf,rf,dh")
     bc.add_argument("--mode", choices=["game", "season", "both"], default="both")
     bc.add_argument("--no-rebuild", action="store_true",
                     help="reuse existing unified tables (just re-emit dumps)")

@@ -41,9 +41,6 @@
   #controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   #controls .ctl-row { display: flex; gap: 16px; align-items: center; }
   #controls .ctl-row label { flex: 0 0 auto; }
-  #controls .sliderRow { display: grid; grid-template-columns: 78px 1fr 36px; align-items: center; gap: 8px; }
-  #controls .sliderRow input[type="range"] { width: 100%; }
-  #controls .sliderRow .num { font-variant-numeric: tabular-nums; color: #8b94a0; font-size: 11px; text-align: right; }
   #controls .coarseRow { display: grid; grid-template-columns: 78px 1fr; align-items: center; gap: 8px; }
   #coarseToggle { display: flex; gap: 3px; }
   #coarseToggle button {
@@ -53,7 +50,6 @@
   }
   #coarseToggle button:hover { color: #e6e8eb; }
   #coarseToggle button.active { background: #2a2f36; color: #f7c948; border-color: #f7c948; }
-  /* 5×/6× coarseness only apply to MLB (its season totals span a far larger grid). */
   #coarseToggle .mlb-only { display: none; }
   body.sport-mlb #coarseToggle .mlb-only { display: block; }
   #controls select {
@@ -84,7 +80,6 @@
   #detail .pra { font-size: 16px; font-weight: 600; color: #f7c948; margin-bottom: 6px; }
   #detail .empty { color: #8b94a0; font-style: italic; }
 
-  /* Collapsible "Last N" bubble beneath the Box Score row. */
   #detail .recent-box { margin-top: 10px; padding-top: 8px;
                         border-top: 1px solid rgba(255,255,255,.08); }
   #detail .recent-header { display: flex; align-items: center; justify-content: space-between; }
@@ -173,7 +168,6 @@
     flex: 0 0 auto;
   }
   .panel-btn:hover { color: #f7c948; border-color: #f7c948; }
-  /* Collapse everything except the header when minimized. */
   .panel.minimized > *:not(.panel-header) { display: none !important; }
   .panel.minimized { padding-bottom: 12px; }
 
@@ -216,20 +210,14 @@
     cursor: pointer; padding: 0 2px; font-size: 12px; line-height: 1;
   }
   .chip button:hover { color: #ff6b6b; }
-  #posBar { display:flex; flex-wrap:wrap; gap:4px; margin:8px 0 6px; }
+  #posBar { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin:8px 0 6px; }
   #posBar button {
     background:#1b1f24; color:#9aa0a6; border:1px solid #2a2f36; border-radius:5px;
     padding:3px 8px; font-size:11px; cursor:pointer; font-family:inherit;
   }
   #posBar button:hover { color:#e6e8eb; }
   #posBar button.active { background:#2a2f36; color:#f7c948; border-color:#3a4049; }
-  #wlBar { display:flex; align-items:center; gap:4px; margin:0 0 8px; }
-  #wlBar .lab { font-size:11px; color:#7a8088; margin-right:4px; }
-  #wlBar button {
-    background:#1b1f24; color:#9aa0a6; border:1px solid #2a2f36; border-radius:5px;
-    padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;
-  }
-  #wlBar button.active { background:#2a2f36; color:#f7c948; }
+  #posBar .pos-sep { width:1px; align-self:stretch; margin:1px 3px; background:#2a2f36; }
 </style>
 </head>
 <body>
@@ -237,6 +225,7 @@
 
 <div id="tabs">
   <button data-sport="nba">NBA</button>
+  <button data-sport="wnba">WNBA</button>
   <button data-sport="nfl">NFL</button>
   <button data-sport="mlb">MLB</button>
 </div>
@@ -256,12 +245,6 @@
   <div class="hint" id="axisHint">Choose any three stats for the axes</div>
 
   <div id="posBar" style="display:none"></div>
-  <div id="wlBar" style="display:none">
-    <span class="lab">Decision</span>
-    <button data-wl="all" class="active">All</button>
-    <button data-wl="1">Wins</button>
-    <button data-wl="0">Losses</button>
-  </div>
 
   <div id="axisGrid">
     <span class="lab">X</span><select id="axisX"></select>
@@ -281,10 +264,9 @@
       <label><input type="checkbox" id="hideScorigamis" /> Hide Scorigamis</label>
     </div>
     <label><input type="checkbox" id="hideRepeated" /> Hide Repeated Games</label>
-    <div class="sliderRow">
-      <span>Peel</span>
-      <input type="range" id="peel" min="0" max="1" step="0.005" value="0" />
-      <span class="num" id="peelNum">0.00</span>
+    <div class="ctl-row" style="justify-content:space-between">
+      <span>Peel<span class="info-icon" data-tip="Turn Peel on to show the handles. Drag the face spheres to slice inward from any side; drag the corner spheres along the diagonal to carve out a corner. Turn Peel off to hide the handles while keeping the peel effect.">?</span></span>
+      <button id="peelToggle" class="filter-toggle">Peel</button>
     </div>
     <div class="ctl-row">
       <label><input type="checkbox" id="showAxes" checked /> Show Axes</label>
@@ -321,7 +303,7 @@
     <button id="playerFilterReverse" class="filter-toggle" title="invert: show only the listed players">Reverse</button>
   </div>
 
-  <div class="hint" style="margin-top:10px">Drag = orbit · Scroll = zoom · Right-drag = pan · Click a cell</div>
+  <div class="hint" style="margin-top:10px">Drag = orbit · Scroll = zoom · Right-drag = pan · Click a cell · Drag spheres = peel</div>
 </div>
 
 <div id="detail" class="panel">
@@ -380,7 +362,15 @@ const axisZEl = document.getElementById('axisZ');
 
 const SHARED = {
   uGlobalOpacity: { value: 1.0 },
+  uClipMin:  { value: new THREE.Vector3(-0.5, -0.5, -0.5) },
+  uClipMax:  { value: new THREE.Vector3(0.5, 0.5, 0.5) },
+  uNotch:    { value: new Float32Array(8) },
+  uCubeSpan: { value: new THREE.Vector3(1, 1, 1) },
 };
+
+const CORNER_SIGNS = [
+  [0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1],
+];
 
 function bucketColor(n) {
   if (n === 1) return COLOR_ONE;
@@ -388,21 +378,61 @@ function bucketColor(n) {
 }
 
 function patchMaterial(material, extraMul = 1.0, alwaysTransparent = false) {
-  // Default to opaque so voxels properly occlude each other from every
-  // angle. The opacity slider flips the occupied material into transparent
-  // mode only when the user actually pulls it below 1.0. Greys keep
-  // alwaysTransparent=true because the 0.18 multiplier requires blending.
   material.transparent = alwaysTransparent;
   material.depthWrite = !alwaysTransparent;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uGlobalOpacity = SHARED.uGlobalOpacity;
-    shader.fragmentShader =
-      'uniform float uGlobalOpacity;\n' +
-      shader.fragmentShader.replace(
-        '#include <opaque_fragment>',
-        `#include <opaque_fragment>
-         gl_FragColor.a *= clamp(uGlobalOpacity * ${extraMul.toFixed(4)}, 0.0, 1.0);`
+    shader.uniforms.uClipMin  = SHARED.uClipMin;
+    shader.uniforms.uClipMax  = SHARED.uClipMax;
+    shader.uniforms.uNotch    = SHARED.uNotch;
+    shader.uniforms.uCubeSpan = SHARED.uCubeSpan;
+
+    shader.vertexShader =
+      'varying vec3 vCellPos;\n' +
+      shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+         #ifdef USE_INSTANCING
+           vCellPos = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+         #else
+           vCellPos = vec3(0.0);
+         #endif`
       );
+
+    shader.fragmentShader =
+      `varying vec3 vCellPos;
+       uniform float uGlobalOpacity;
+       uniform vec3 uClipMin;
+       uniform vec3 uClipMax;
+       uniform vec3 uCubeSpan;
+       uniform float uNotch[8];\n` +
+      shader.fragmentShader
+        .replace(
+          '#include <clipping_planes_fragment>',
+          `#include <clipping_planes_fragment>
+           // Face peel: hide voxels whose center is outside the clip slab.
+           if (any(lessThan(vCellPos, uClipMin)) ||
+               any(greaterThan(vCellPos, uClipMax))) discard;
+           // Corner notches: uNotch[i] is a fraction 0..1 of the span, applied
+           // per-axis, so the notch's inner corner slides along the body
+           // diagonal (corner -> opposite corner) even on anisotropic cubes.
+           // Corner i decode matches CORNER_SIGNS (bit0=x bit1=y bit2=z);
+           // GLSL ES 1.00 has no bit ops, hence mod/floor.
+           for (int i = 0; i < 8; i++) {
+             if (uNotch[i] <= 0.0) continue;
+             vec3 s = vec3(mod(float(i), 2.0),
+                           mod(floor(float(i) * 0.5), 2.0),
+                           floor(float(i) * 0.25));
+             vec3 corner = s * uCubeSpan;
+             vec3 depth = uNotch[i] * uCubeSpan;
+             if (all(lessThan(abs(vCellPos - corner), depth - 1e-4))) discard;
+           }`
+        )
+        .replace(
+          '#include <opaque_fragment>',
+          `#include <opaque_fragment>
+           gl_FragColor.a *= clamp(uGlobalOpacity * ${extraMul.toFixed(4)}, 0.0, 1.0);`
+        );
   };
 }
 
@@ -431,7 +461,6 @@ function makeLabel(text, color = '#e6e8eb', heightUnits = 14) {
   return sprite;
 }
 
-// ---- scene setup (one time) ----
 const canvas = document.getElementById('canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
@@ -456,22 +485,21 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// Container for cube-specific objects. We swap out its contents on stat change.
 const cubeGroup = new THREE.Group();
 scene.add(cubeGroup);
 
-// State for the currently-active cube.
 const state = {
   occMesh: null,
   enclosedMesh: null,
+  handlesGroup: null,
+  handleSize: 1,
   instanceIndex: [],
   enclosedIndex: [],
   occupied: null,
   MAX_X: 0, MAX_Y: 0, MAX_Z: 0,
-  // Render origin offset: the least value on each axis (min(0, dataMin)), so
-  // negative stats render below zero instead of being clamped to the corner.
   base: { x: 0, y: 0, z: 0 },
   axes: null,
+  peelOn: false,
 };
 
 let hoverColorRestore = null;
@@ -486,16 +514,15 @@ function disposeNode(n) {
 }
 
 function clearCube() {
-  // dispose previous meshes
   while (cubeGroup.children.length) {
     const c = cubeGroup.children.pop();
     cubeGroup.remove(c);
-    disposeNode(c);
-    // Sprite map textures
-    if (c.material && c.material.map) c.material.map.dispose();
+    c.traverse(disposeNode);
+    c.traverse(n => { if (n.material && n.material.map) n.material.map.dispose(); });
   }
   state.occMesh = null;
   state.enclosedMesh = null;
+  state.handlesGroup = null;
   state.instanceIndex = [];
   state.enclosedIndex = [];
   state.occupied = null;
@@ -521,16 +548,11 @@ function setHover(mesh, id) {
   mesh.instanceColor.needsUpdate = true;
 }
 
-// Coarseness: bin the cube into k×k×k blocks, summing the tally of every line
-// in a block into one voxel. Lets too-granular season data collapse so true
-// outliers (lone voxels) stand out. rawData holds the untouched 1× payload so
-// changing k just re-bins client-side — no refetch.
 let COARSE = 1;
 let rawData = null;
+let framedDiag = 0;
 
 function repBetter(c, cur) {
-  // Pick the most substantial line in a block as the voxel's example: most
-  // games, then most occurrences, then most recent.
   if (!cur) return true;
   const cg = c.gp || 0, rg = cur.gp || 0;
   if (cg !== rg) return cg > rg;
@@ -549,14 +571,9 @@ function coarsenData(data, k) {
     if (!b) { b = { p: bp, r: br, a: ba, n: 0, rep: null, occ: [] }; bins.set(key, b); }
     b.n += c.n;
     if (repBetter(c, b.rep)) b.rep = c;
-    // Gather occurrences so the voxel's recent list is the TRUE 5 most-recent
-    // across every fine cell merged into it (not just the representative's).
-    // Each fine cell already stores its own true top-5, so the union contains
-    // the block's true top-5 — exact, same argument as the dump rollup.
     if (Array.isArray(c.recent)) { for (const e of c.recent) b.occ.push(e); }
     else b.occ.push({ pl: c.pl, d: c.d, t: c.t, m: c.m, g: c.g, pid: c.pid, w: c.w });
   }
-  // date DESC, with a deterministic tiebreak matching the dump ordering.
   const cmp = seasonMode
     ? (a, e) => (a.d < e.d ? 1 : a.d > e.d ? -1 : 0) || (a.pl < e.pl ? -1 : a.pl > e.pl ? 1 : 0)
     : (a, e) => (a.d < e.d ? 1 : a.d > e.d ? -1 : 0) || (Number(e.g || 0) - Number(a.g || 0));
@@ -564,8 +581,6 @@ function coarsenData(data, k) {
   for (const b of bins.values()) {
     const r = b.rep;
     const recent = b.occ.sort(cmp).slice(0, 5);
-    // sp/sr/sa keep the representative line's true (un-binned) stat values so
-    // the detail panel can show the exact statline behind a coarsened voxel.
     cells.push({ p: b.p, r: b.r, a: b.a, n: b.n,
                  d: r.d, pl: r.pl, t: r.t, m: r.m, g: r.g, gp: r.gp, pid: r.pid,
                  sp: r.p, sr: r.r, sa: r.a, recent });
@@ -578,21 +593,17 @@ function coarsenData(data, k) {
   };
 }
 
-function renderCube() {
+function renderCube(preserveView) {
   if (!rawData) return;
-  buildCube(coarsenData(rawData, COARSE));
+  buildCube(coarsenData(rawData, COARSE), preserveView);
 }
 
-function buildCube(data) {
+function buildCube(data, preserveView) {
   clearCube();
 
   const axes = data.axes;
   state.axes = axes;
 
-  // Anchor the origin at the least value on each axis so negative stats (e.g.
-  // NFL per-game rushing/receiving averages) render below the corner instead of
-  // being clamped there. base = min(0, dataMin), so all-positive cubes keep
-  // their familiar 0,0,0 origin and only negatives push it down.
   let minP = 0, minR = 0, minA = 0;
   for (const c of data.cells) {
     if (c.p < minP) minP = c.p;
@@ -601,26 +612,18 @@ function buildCube(data) {
   }
   const base = { x: minP, y: minR, z: minA };
   state.base = base;
-  // MAX_* are render-space spans (value range), measured from the new origin.
   const MAX_X = axes.x.max - base.x, MAX_Y = axes.y.max - base.y, MAX_Z = axes.z.max - base.z;
   state.MAX_X = MAX_X; state.MAX_Y = MAX_Y; state.MAX_Z = MAX_Z;
 
-  // Sort occupied cells ascending by Euclidean distance from the origin so the
-  // peel slider can just truncate mesh.count to hide outer layers.
-  const cells = data.cells.slice().sort((c1, c2) => {
-    const o1p = c1.p - base.x, o1r = c1.r - base.y, o1a = c1.a - base.z;
-    const o2p = c2.p - base.x, o2r = c2.r - base.y, o2a = c2.a - base.z;
-    return (o1p*o1p + o1r*o1r + o1a*o1a) - (o2p*o2p + o2r*o2r + o2a*o2a);
-  });
+  const cells = data.cells;
 
   const occupied = new Map();
   for (const c of cells) occupied.set(`${c.p},${c.r},${c.a}`, c);
   state.occupied = occupied;
 
-  // --- Occupied voxels ---
   const geomOcc = new THREE.BoxGeometry(0.9, 0.9, 0.9);
   const matOcc = new THREE.MeshLambertMaterial();
-  patchMaterial(matOcc, 1.0, /* alwaysTransparent */ false);
+  patchMaterial(matOcc, 1.0, false);
 
   const occMesh = new THREE.InstancedMesh(geomOcc, matOcc, Math.max(1, cells.length));
   occMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -635,17 +638,16 @@ function buildCube(data) {
     occMesh.setColorAt(i, bucketColor(c.n));
     instanceIndex.push(c);
   }
+  occMesh.count = cells.length;
   occMesh.instanceMatrix.needsUpdate = true;
   if (occMesh.instanceColor) occMesh.instanceColor.needsUpdate = true;
   cubeGroup.add(occMesh);
   state.occMesh = occMesh;
   state.instanceIndex = instanceIndex;
 
-  // Refresh year-range bounds from the new dataset before applying filters.
   updateYearBounds();
   applyVisibilityFilters();
 
-  // --- Axes + labels + bbox ---
   const axesGroup = new THREE.Group();
   axesGroup.name = 'axes';
   const pad = 1;
@@ -653,7 +655,6 @@ function buildCube(data) {
     const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]);
     return new THREE.Line(g, new THREE.LineBasicMaterial({ color: hex }));
   };
-  // Neutral axis color so the bright voxel colors stay the visual story.
   const AXIS_COLOR = 0x8b94a0;
   axesGroup.add(makeLine([-pad, -pad, -pad], [MAX_X + pad, -pad, -pad], AXIS_COLOR));
   axesGroup.add(makeLine([-pad, -pad, -pad], [-pad, MAX_Y + pad, -pad], AXIS_COLOR));
@@ -667,13 +668,9 @@ function buildCube(data) {
   bbox.position.set(MAX_X / 2, MAX_Y / 2, MAX_Z / 2);
   axesGroup.add(bbox);
 
-  // Scale labels to the cube size — clamped so they're readable on tiny
-  // cubes (e.g. STL/BLK/TOV ~12 units) without dominating big ones.
   const maxDim = Math.max(MAX_X, MAX_Y, MAX_Z);
   const labelHeight = Math.min(8, Math.max(0.8, maxDim * 0.06));
   const labelOffset = labelHeight * 0.4;
-  // Labels live in a SEPARATE group so the "show labels" toggle can hide
-  // text without removing the colored axis lines + bounding box.
   const labelsGroup = new THREE.Group();
   labelsGroup.name = 'labels';
   const LABEL_COLOR = '#8b94a0';
@@ -691,25 +688,29 @@ function buildCube(data) {
   axesGroup.visible = document.getElementById('showAxes').checked;
   labelsGroup.visible = document.getElementById('showLabels').checked;
 
-  // --- Frame camera to fit the new cube ---
-  // Use the bounding-box diagonal so cubes that are long on one axis (e.g.
-  // NFL Rec Yds at 336x21x5) don't get pushed out as far as cubes where the
-  // long axis is more central to the view.
+  buildPeelHandles(maxDim);
+
   const cx = MAX_X / 2, cy = MAX_Y / 2, cz = MAX_Z / 2;
-  controls.target.set(cx, cy, cz);
   const diag = Math.sqrt(MAX_X * MAX_X + MAX_Y * MAX_Y + MAX_Z * MAX_Z);
   const r0 = Math.max(diag, 12) * 0.9;
-  camera.position.set(cx + r0 * 0.9, cy + r0 * 0.7, cz + r0 * 1.1);
-  camera.lookAt(cx, cy, cz);
+  if (preserveView && framedDiag > 0) {
+    const offset = camera.position.clone().sub(controls.target).multiplyScalar(diag / framedDiag);
+    controls.target.set(cx, cy, cz);
+    camera.position.set(cx + offset.x, cy + offset.y, cz + offset.z);
+  } else {
+    controls.target.set(cx, cy, cz);
+    camera.position.set(cx + r0 * 0.9, cy + r0 * 0.7, cz + r0 * 1.1);
+  }
+  camera.lookAt(controls.target);
   controls.update();
+  framedDiag = diag;
 
-  // --- Enclosed empties (6-neighbor) — built eagerly, it's a small set ---
   buildEnclosedMesh();
   if (state.enclosedMesh) {
     state.enclosedMesh.visible = document.getElementById('showEnclosed').checked;
   }
 
-  applyPeel();
+  resetPeel();
 
   statusEl.innerHTML =
     `Made by <a href="https://github.com/orion-hoch/BoxScorigami" target="_blank" rel="noopener" style="color:#f7c948">Orion Hoch</a> · BBox = ${MAX_X}×${MAX_Y}×${MAX_Z}`;
@@ -719,8 +720,6 @@ function buildEnclosedMesh() {
   if (state.enclosedMesh || !state.occupied) return;
   const { MAX_X, MAX_Y, MAX_Z, base, occupied } = state;
 
-  // occupied is keyed by raw stat values, so iterate the raw coordinate range
-  // (base .. base+span) and render each hit at the base-relative offset.
   const positions = [];
   for (let p = base.x; p <= base.x + MAX_X; p++) {
     for (let r = base.y; r <= base.y + MAX_Y; r++) {
@@ -739,16 +738,9 @@ function buildEnclosedMesh() {
   }
   if (positions.length === 0) return;
 
-  // Match peel ordering (distance from origin) used by the occupied mesh.
-  positions.sort((q1, q2) => {
-    const o1p = q1[0]-base.x, o1r = q1[1]-base.y, o1a = q1[2]-base.z;
-    const o2p = q2[0]-base.x, o2r = q2[1]-base.y, o2a = q2[2]-base.z;
-    return (o1p*o1p + o1r*o1r + o1a*o1a) - (o2p*o2p + o2r*o2r + o2a*o2a);
-  });
-
   const geom = new THREE.BoxGeometry(0.9, 0.9, 0.9);
   const mat = new THREE.MeshLambertMaterial({ color: COLOR_ENCLOSED });
-  patchMaterial(mat, 1.0, /* alwaysTransparent */ false);
+  patchMaterial(mat, 1.0, false);
 
   const mesh = new THREE.InstancedMesh(geom, mat, positions.length);
   const dummy = new THREE.Object3D();
@@ -766,36 +758,132 @@ function buildEnclosedMesh() {
   state.enclosedIndex = idx;
 }
 
-// ---- Picking ----
+const HANDLE_COLOR = 0xf7c948;
+const HANDLE_HOVER = 0xffffff;
+
+function buildPeelHandles(maxDim) {
+  const handleSize = Math.min(6, Math.max(0.8, maxDim * 0.05));
+  state.handleSize = handleSize;
+  const group = new THREE.Group();
+  group.name = 'peelHandles';
+  group.visible = state.peelOn;
+
+  const sphereGeo = new THREE.SphereGeometry(handleSize * 0.26, 16, 12);
+  const makeMat = (color) => new THREE.MeshBasicMaterial({
+    color, depthTest: false, transparent: true, opacity: 0.9,
+  });
+
+  for (const axis of ['x', 'y', 'z']) {
+    for (const sign of [1, -1]) {
+      const face = new THREE.Mesh(sphereGeo, makeMat(HANDLE_COLOR));
+      face.userData = { type: 'face', axis, sign, base: HANDLE_COLOR, hover: HANDLE_HOVER };
+      face.renderOrder = 998;
+      group.add(face);
+    }
+  }
+  for (let k = 0; k < 8; k++) {
+    const s = new THREE.Mesh(sphereGeo, makeMat(HANDLE_COLOR));
+    s.userData = { type: 'corner', index: k, base: HANDLE_COLOR, hover: HANDLE_HOVER };
+    s.renderOrder = 998;
+    group.add(s);
+  }
+  cubeGroup.add(group);
+  state.handlesGroup = group;
+}
+
+function updateHandlePositions() {
+  const g = state.handlesGroup;
+  if (!g) return;
+  const mn = SHARED.uClipMin.value, mx = SHARED.uClipMax.value;
+  const span = SHARED.uCubeSpan.value;
+  const off = state.handleSize * 0.5 + 0.4;
+  for (const h of g.children) {
+    if (h.userData.type === 'face') {
+      const { axis, sign } = h.userData;
+      for (const a of ['x', 'y', 'z']) {
+        h.position[a] = a === axis
+          ? (sign > 0 ? mx[axis] : mn[axis]) + sign * off
+          : span[a] / 2;
+      }
+    } else {
+      const sg = CORNER_SIGNS[h.userData.index];
+      const f = SHARED.uNotch.value[h.userData.index];
+      h.position.set(
+        sg[0] ? span.x + 0.5 - f * span.x : -0.5 + f * span.x,
+        sg[1] ? span.y + 0.5 - f * span.y : -0.5 + f * span.y,
+        sg[2] ? span.z + 0.5 - f * span.z : -0.5 + f * span.z);
+    }
+  }
+}
+
+function resetPeel() {
+  SHARED.uCubeSpan.value.set(state.MAX_X, state.MAX_Y, state.MAX_Z);
+  SHARED.uClipMin.value.set(-0.5, -0.5, -0.5);
+  SHARED.uClipMax.value.set(state.MAX_X + 0.5, state.MAX_Y + 0.5, state.MAX_Z + 0.5);
+  SHARED.uNotch.value.fill(0);
+  updateHandlePositions();
+}
+
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 
-function pick(event) {
-  if (!state.occMesh) return null;
+function rayFromEvent(event) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  return raycaster.ray;
+}
+
+function isPeeledRC(x, y, z) {
+  const mn = SHARED.uClipMin.value, mx = SHARED.uClipMax.value;
+  if (x < mn.x || y < mn.y || z < mn.z || x > mx.x || y > mx.y || z > mx.z) return true;
+  const notch = SHARED.uNotch.value, span = SHARED.uCubeSpan.value;
+  for (let i = 0; i < 8; i++) {
+    const f = notch[i];
+    if (f <= 0) continue;
+    const cx = (i & 1) ? span.x : 0, cy = (i & 2) ? span.y : 0, cz = (i & 4) ? span.z : 0;
+    if (Math.abs(x - cx) < f * span.x - 1e-4 &&
+        Math.abs(y - cy) < f * span.y - 1e-4 &&
+        Math.abs(z - cz) < f * span.z - 1e-4) return true;
+  }
+  return false;
+}
+
+function pick(event) {
+  if (!state.occMesh) return null;
+  rayFromEvent(event);
   const targets = [state.occMesh];
   if (state.enclosedMesh && state.enclosedMesh.visible) targets.push(state.enclosedMesh);
   const hits = raycaster.intersectObjects(targets, false);
-  return hits[0] || null;
+  const b = state.base;
+  for (const hit of hits) {
+    const c = hit.object === state.occMesh
+      ? state.instanceIndex[hit.instanceId]
+      : state.enclosedIndex[hit.instanceId];
+    if (c && !isPeeledRC(c.p - b.x, c.r - b.y, c.a - b.z)) return hit;
+  }
+  return null;
 }
 
-// Rate axes (AVG/OBP/ERA/…) store scaled-integer bins; STATS_META carries the
-// scale + decimals so we show .310 / 2.6 instead of the raw 31 / 26.
+function pickHandle(event) {
+  if (!state.handlesGroup || !state.peelOn) return null;
+  rayFromEvent(event);
+  const hits = raycaster.intersectObjects(state.handlesGroup.children, false);
+  return hits.length ? hits[0].object : null;
+}
+
 function fmtStat(key, v) {
   const m = STATS_META[key];
   if (m && m.scale) {
     const s = (v / m.scale).toFixed(m.decimals);
-    return s.startsWith('0.') ? s.slice(1) : s;   // .310 not 0.310
+    return s.startsWith('0.') ? s.slice(1) : s;
   }
   return v;
 }
 
 function fmtAxis(c) {
   const a = state.axes;
-  // When coarsened, p/r/a are bin indices — show the stat range each covers.
   if (COARSE > 1) {
     const rng = v => `${v * COARSE}–${v * COARSE + COARSE - 1}`;
     return `${rng(c.p)} ${a.x.label.toLowerCase()} · ${rng(c.r)} ${a.y.label.toLowerCase()} · ${rng(c.a)} ${a.z.label.toLowerCase()}`;
@@ -814,14 +902,10 @@ function showDetailForCell(c) {
     ? `<a href="${url}" target="_blank" rel="noopener" style="color:#f7c948">${linkLabel} ↗</a>`
     : (c.g || '—');
   const seasonMode = MODE === 'season';
-  // When coarsened, the voxel spans a k×k×k block of statlines; show the exact
-  // line behind the displayed example (sp/sr/sa carried by coarsenData).
   const ax = state.axes;
   const statlineRow = (COARSE > 1 && typeof c.sp === 'number')
     ? `<div class="row"><span class="k">Statline</span><span class="v">${c.sp} ${ax.x.label.toLowerCase()} · ${c.sr} ${ax.y.label.toLowerCase()} · ${c.sa} ${ax.z.label.toLowerCase()}</span></div>`
     : '';
-  // Season cells are a player-season, not a single game — drop the matchup/
-  // box-score rows. The example shown is that line's top season (most games).
   const gamesRow = typeof c.gp === 'number'
     ? `<div class="row"><span class="k">Games</span><span class="v">${c.gp}</span></div>`
     : '';
@@ -838,11 +922,7 @@ function showDetailForCell(c) {
     ${(c.w === 1 || c.w === 0) ? `<div class="row"><span class="k">Decision</span><span class="v">${c.w === 1 ? 'Won' : 'Lost'}</span></div>` : ''}
     <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
-  // Repeated cells (n>=2) carry up to 5 most-recent occurrences, shown in a
-  // collapsible "Last N" bubble beneath the headline (collapsed by default).
-  // The Min Games filtering happens in the export, so c.recent already excludes
-  // sub-threshold seasons when the min-games dataset is loaded — nothing to do here.
-  const hasRecent = Array.isArray(c.recent) && c.recent.length >= 1;
+  const hasRecent = SPORT !== 'mlb' && Array.isArray(c.recent) && c.recent.length >= 1;
   const recentBox = hasRecent ? `
     <div class="recent-box">
       <div class="recent-header">
@@ -858,7 +938,6 @@ function showDetailForCell(c) {
     ${detailRows}
     ${recentBox}
   `;
-  // detailBody innerHTML is rebuilt each click, so bind the toggle fresh.
   const rt = document.getElementById('recentToggle');
   if (rt) rt.addEventListener('click', () => {
     const list = document.getElementById('recentList');
@@ -869,11 +948,9 @@ function showDetailForCell(c) {
   });
 }
 
-// Renders the up-to-N most-recent occurrences: player name, date, and a [link]
-// to that game's box score (Single Game) or the player's page (Season).
 function recentRows(recent, seasonMode) {
   return recent.map(e => {
-    const url = seasonMode ? playerUrl(e) : boxscoreUrl(e);
+    const url = seasonMode ? playerLinkUrl(e) : boxscoreUrl(e);
     const link = url
       ? `<a href="${url}" target="_blank" rel="noopener">[link]</a>`
       : '—';
@@ -896,7 +973,106 @@ function showDetailForEnclosed(p, r, a) {
   `;
 }
 
+let handleDrag = null;
+let handleHover = null;
+
+const _lineW = new THREE.Vector3();
+function closestLineParamToRay(P0, dir, ray) {
+  const w = _lineW.copy(P0).sub(ray.origin);
+  const b = dir.dot(ray.direction);
+  const denom = 1 - b * b;
+  if (denom < 1e-6) return null;
+  return (b * ray.direction.dot(w) - dir.dot(w)) / denom;
+}
+
+function setHandleHover(mesh) {
+  if (handleHover === mesh) return;
+  if (handleHover) handleHover.material.color.setHex(handleHover.userData.base);
+  handleHover = mesh;
+  if (mesh) mesh.material.color.setHex(mesh.userData.hover);
+}
+
+const AXIS_VEC = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
+
+function cornerDiagLen() {
+  const span = SHARED.uCubeSpan.value;
+  return Math.hypot(span.x, span.y, span.z);
+}
+function currentHandleParam(ud) {
+  if (ud.type === 'face') {
+    const v = ud.sign > 0 ? SHARED.uClipMax.value : SHARED.uClipMin.value;
+    return v[ud.axis];
+  }
+  return SHARED.uNotch.value[ud.index] * cornerDiagLen();
+}
+
+function beginHandleDrag(mesh, ev) {
+  const ud = mesh.userData;
+  const span = SHARED.uCubeSpan.value;
+  const lineP0 = new THREE.Vector3();
+  const lineDir = new THREE.Vector3();
+  if (ud.type === 'face') {
+    for (const a of ['x', 'y', 'z']) lineP0[a] = a === ud.axis ? 0 : span[a] / 2;
+    lineDir.copy(AXIS_VEC[ud.axis]);
+  } else {
+    const sg = CORNER_SIGNS[ud.index];
+    lineP0.set(sg[0] ? span.x + 0.5 : -0.5,
+               sg[1] ? span.y + 0.5 : -0.5,
+               sg[2] ? span.z + 0.5 : -0.5);
+    lineDir.set(sg[0] ? -span.x : span.x,
+                sg[1] ? -span.y : span.y,
+                sg[2] ? -span.z : span.z).normalize();
+  }
+  const s = closestLineParamToRay(lineP0, lineDir, rayFromEvent(ev));
+  const cur = currentHandleParam(ud);
+  handleDrag = { ud, lineP0, lineDir, grabOffset: cur - (s ?? cur) };
+  setHandleHover(mesh);
+  controls.enabled = false;
+  renderer.domElement.style.cursor = 'grabbing';
+  window.addEventListener('mousemove', onHandleDragMove);
+  window.addEventListener('mouseup', endHandleDrag);
+}
+
+function onHandleDragMove(ev) {
+  if (!handleDrag) return;
+  const { ud, lineP0, lineDir, grabOffset } = handleDrag;
+  const s = closestLineParamToRay(lineP0, lineDir, rayFromEvent(ev));
+  if (s === null) return;
+  const span = SHARED.uCubeSpan.value;
+  if (ud.type === 'face') {
+    const t = s + grabOffset;
+    if (ud.sign > 0) {
+      SHARED.uClipMax.value[ud.axis] =
+        Math.min(span[ud.axis] + 0.5, Math.max(SHARED.uClipMin.value[ud.axis], t));
+    } else {
+      SHARED.uClipMin.value[ud.axis] =
+        Math.max(-0.5, Math.min(SHARED.uClipMax.value[ud.axis], t));
+    }
+  } else {
+    const f = Math.max(0, Math.min(1, (s + grabOffset) / cornerDiagLen()));
+    SHARED.uNotch.value[ud.index] = f;
+  }
+  updateHandlePositions();
+}
+
+function endHandleDrag() {
+  window.removeEventListener('mousemove', onHandleDragMove);
+  window.removeEventListener('mouseup', endHandleDrag);
+  handleDrag = null;
+  controls.enabled = true;
+  renderer.domElement.style.cursor = 'default';
+}
+
 renderer.domElement.addEventListener('mousemove', (ev) => {
+  if (handleDrag) return;
+  const h = pickHandle(ev);
+  if (h) {
+    clearHover();
+    setHandleHover(h);
+    renderer.domElement.style.cursor = 'grab';
+    return;
+  }
+  setHandleHover(null);
   const hit = pick(ev);
   if (!hit) { clearHover(); renderer.domElement.style.cursor = 'default'; return; }
   setHover(hit.object, hit.instanceId);
@@ -904,7 +1080,13 @@ renderer.domElement.addEventListener('mousemove', (ev) => {
 });
 
 let dragStart = null;
-renderer.domElement.addEventListener('mousedown', (ev) => { dragStart = { x: ev.clientX, y: ev.clientY }; });
+renderer.domElement.addEventListener('mousedown', (ev) => {
+  if (ev.button === 0) {
+    const h = pickHandle(ev);
+    if (h) { beginHandleDrag(h, ev); return; }
+  }
+  dragStart = { x: ev.clientX, y: ev.clientY };
+});
 renderer.domElement.addEventListener('mouseup', (ev) => {
   if (!dragStart) return;
   const dx = ev.clientX - dragStart.x, dy = ev.clientY - dragStart.y;
@@ -919,24 +1101,13 @@ renderer.domElement.addEventListener('mouseup', (ev) => {
   }
 });
 
-// ---- Visibility filters (hide-scorigamis + per-player filter) ----
-// Per-cell visibility is applied by swapping the instance matrix between the
-// cell's position and a zero-scale matrix. Original positions are stashed in
-// state.instanceIndex (each cell has p,r,a), so no extra storage is needed.
-// Park hidden instances far off-camera AND zero-scaled so they don't render
-// and can't be raycasted accidentally.
 const HIDE_MATRIX = new THREE.Matrix4()
   .makeTranslation(-1e6, -1e6, -1e6)
   .multiply(new THREE.Matrix4().makeScale(0, 0, 0));
-const blockedPlayers = new Set();   // displayed names
-let blockedLower = new Set();        // normalized lookup, rebuilt on change
-let reversePlayerFilter = false;     // false = hide listed; true = show only listed
+const blockedPlayers = new Set();
+let blockedLower = new Set();
+let reversePlayerFilter = false;
 
-// Strip diacritics + lowercase so "luka doncic" matches "Luka Dončić",
-// "nikola jokic" matches "Nikola Jokić", "ozzie albies" matches "Ozzie
-// Albies", etc. NFD decomposition splits each accented char into base
-// letter + combining mark; we then strip the combining marks (the
-// Unicode "Combining Diacritical Marks" block, U+0300–U+036F).
 function normalizeName(s) {
   return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 }
@@ -945,12 +1116,6 @@ function refreshBlockedLower() {
   blockedLower = new Set([...blockedPlayers].map(normalizeName));
 }
 
-// Returns true if this cell should be hidden by the player filter.
-// - When no players are listed: never blocked.
-// - Normal mode: blocked when the cell's n=1 latest player is in the list.
-// - Reverse ("Show only listed") mode: hide every n>=2 cell (we can't tell
-//   which players were in those) AND every n=1 cell whose player isn't
-//   listed. Net effect: only the listed players' scorigamis remain.
 function isPlayerBlocked(cell) {
   if (blockedLower.size === 0) return false;
   if (reversePlayerFilter) {
@@ -962,7 +1127,6 @@ function isPlayerBlocked(cell) {
 }
 
 function getYearRange() {
-  // Returns {min, max} as integers, or null on either bound if input is blank.
   const fromEl = document.getElementById('yearFrom');
   const toEl = document.getElementById('yearTo');
   const fromV = fromEl.value === '' ? null : parseInt(fromEl.value, 10);
@@ -982,8 +1146,6 @@ function applyVisibilityFilters() {
   for (let i = 0; i < state.instanceIndex.length; i++) {
     const c = state.instanceIndex[i];
     const playerBlocked = isPlayerBlocked(c);
-    // Year filter: cell's most-recent date (c.d, "YYYY-MM-DD") must fall in
-    // [yr.min, yr.max]. Cells lacking a date are kept (no signal to filter on).
     let yearBlocked = false;
     if ((yr.min !== null || yr.max !== null) && c.d) {
       const yyyy = parseInt(c.d.slice(0, 4), 10);
@@ -1001,15 +1163,13 @@ function applyVisibilityFilters() {
     }
   }
   mesh.instanceMatrix.needsUpdate = true;
-  // Leaderboard is derived from visible n=1 cells, excluding the "hide
-  // scorigamis" toggle (which is cosmetic) but honoring year + player filters.
   recomputeLeaderboard();
 }
 
 function recomputeLeaderboard() {
   if (!state.instanceIndex || !state.instanceIndex.length) return;
   const yr = getYearRange();
-  const counts = new Map();   // player_name -> count
+  const counts = new Map();
   for (const c of state.instanceIndex) {
     if (c.n !== 1 || !c.pl) continue;
     if ((yr.min !== null || yr.max !== null) && c.d) {
@@ -1031,8 +1191,6 @@ function recomputeLeaderboard() {
 }
 
 function updateYearBounds() {
-  // Compute the data's min/max year so the inputs can act as bounds + show
-  // the available range. Called after each cube load.
   let min = Infinity, max = -Infinity;
   for (const c of state.instanceIndex) {
     if (!c.d) continue;
@@ -1097,10 +1255,8 @@ playerFilterInputEl.addEventListener('keydown', (ev) => {
   }
 });
 
-// ---- Info icon popovers (click ? to toggle explanation tooltip) ----
 document.addEventListener('click', (ev) => {
   const icon = ev.target.closest('.info-icon');
-  // Always remove any open popover; a fresh one is opened below if needed.
   document.querySelectorAll('.info-popover').forEach(p => p.remove());
   if (!icon) return;
   ev.preventDefault();
@@ -1110,14 +1266,12 @@ document.addEventListener('click', (ev) => {
   tip.textContent = icon.dataset.tip || '';
   document.body.appendChild(tip);
   const rect = icon.getBoundingClientRect();
-  // Place under-and-right of the icon; clamp to viewport.
   const x = Math.min(window.innerWidth - tip.offsetWidth - 8, rect.left);
   const y = rect.bottom + 6;
   tip.style.left = Math.max(8, x) + 'px';
   tip.style.top = y + 'px';
 });
 
-// ---- Panel header buttons (minimize / close) ----
 document.querySelectorAll('.panel-btn').forEach((btn) => {
   btn.addEventListener('click', (ev) => {
     ev.stopPropagation();
@@ -1133,29 +1287,14 @@ document.querySelectorAll('.panel-btn').forEach((btn) => {
   });
 });
 
-// ---- UI bindings ----
 document.getElementById('showEnclosed').addEventListener('change', (e) => {
   if (state.enclosedMesh) state.enclosedMesh.visible = e.target.checked;
 });
-const peelEl = document.getElementById('peel');
-const peelNumEl = document.getElementById('peelNum');
-
-function applyPeel() {
-  const v = parseFloat(peelEl.value);
-  const keepFrac = 1 - v;
-  if (state.occMesh) {
-    const total = state.instanceIndex.length;
-    state.occMesh.count = Math.max(0, Math.min(total, Math.round(total * keepFrac)));
-  }
-  if (state.enclosedMesh) {
-    const total = state.enclosedIndex.length;
-    state.enclosedMesh.count = Math.max(0, Math.min(total, Math.round(total * keepFrac)));
-  }
-}
-
-peelEl.addEventListener('input', () => {
-  peelNumEl.textContent = parseFloat(peelEl.value).toFixed(2);
-  applyPeel();
+document.getElementById('peelToggle').addEventListener('click', (e) => {
+  state.peelOn = !state.peelOn;
+  e.currentTarget.classList.toggle('active', state.peelOn);
+  if (state.handlesGroup) state.handlesGroup.visible = state.peelOn;
+  if (!state.peelOn) setHandleHover(null);
 });
 document.getElementById('showAxes').addEventListener('change', (e) => {
   const a = cubeGroup.getObjectByName('axes');
@@ -1166,11 +1305,6 @@ document.getElementById('showLabels').addEventListener('change', (e) => {
   if (l) l.visible = e.target.checked;
 });
 
-
-// ---- Data loading (static) ----
-// Sport-keyed: tally/<sport>/<a>_<b>_<c>.json. Each tab swaps the SPORT
-// variable, which prefixes all data fetches. STATS_META is per-sport so the
-// dropdowns repopulate cleanly when switching.
 const SPORTS = {
   nba: {
     label: 'NBA',
@@ -1187,11 +1321,15 @@ const SPORTS = {
     title: 'BoxScorigami',
     defaults: ['sb', 'rbi', 'hr'],
   },
+  wnba: {
+    label: 'WNBA',
+    title: 'BoxScorigami',
+    defaults: ['pts', 'reb', 'ast'],
+  },
 };
 
-// Per-sport box-score-URL builder. Receives a cell, returns a full URL or
-// null if we can't reliably construct one.
 const NBA_TO_BBR_TEAM = { BKN: 'BRK', CHA: 'CHO', PHX: 'PHO' };
+const WNBA_TO_BBR_TEAM = { SAN: 'SAS', PHX: 'PHO' };
 const NFL_TO_PFR_TEAM = {
   KC: 'kan', NE: 'nwe', NO: 'nor', TB: 'tam', GB: 'gnb', SF: 'sfo',
   LV: 'rai', LAR: 'ram', LAC: 'sdg', LA: 'ram',
@@ -1199,16 +1337,12 @@ const NFL_TO_PFR_TEAM = {
   STL: 'ram', SD: 'sdg', OAK: 'rai',
 };
 
-// Player page for the cell's representative (most-recent / unique) player,
-// keyed by the player_id baked into each cell. NBA/MLB ids map to clean URLs;
-// NFL ids are nflverse GSIS ids with no public page, so it returns null.
 function playerUrl(cell) {
   if (!cell || cell.pid == null) return null;
   if (SPORT === 'nba') return `https://www.nba.com/player/${cell.pid}`;
+  if (SPORT === 'wnba') return `https://www.wnba.com/player/${cell.pid}`;
   if (SPORT === 'mlb') return `https://www.mlb.com/player/${cell.pid}`;
   if (SPORT === 'nfl') {
-    // Historical rows carry PFR ids (e.g. "SchaEl20") -> PFR player page.
-    // Modern nflverse rows carry GSIS ids ("00-0033873") with no public page.
     const id = String(cell.pid);
     if (/^[A-Za-z]/.test(id) && !id.includes('-')) {
       return `https://www.pro-football-reference.com/players/${id[0].toUpperCase()}/${id}.htm`;
@@ -1217,9 +1351,25 @@ function playerUrl(cell) {
   return null;
 }
 
+function seasonBoxscoresUrl(cell) {
+  if (!cell || cell.pid == null || !cell.d) return null;
+  const st = 'Regular%20Season';
+  if (SPORT === 'wnba') return `https://stats.wnba.com/player/${cell.pid}/boxscores-traditional/?Season=${cell.d}&SeasonType=${st}`;
+  if (SPORT === 'nba')  return `https://www.nba.com/stats/player/${cell.pid}/boxscores-traditional?Season=${cell.d}&SeasonType=${st}`;
+  return null;
+}
+
+function playerLinkUrl(cell) {
+  if (MODE === 'season') {
+    const u = seasonBoxscoresUrl(cell);
+    if (u) return u;
+  }
+  return playerUrl(cell);
+}
+
 function playerHtml(cell, suffix) {
   const name = (cell.pl || 'Unknown') + (suffix || '');
-  const url = playerUrl(cell);
+  const url = playerLinkUrl(cell);
   return url
     ? `<a href="${url}" target="_blank" rel="noopener" style="color:#e6e8eb">${name} ↗</a>`
     : name;
@@ -1230,7 +1380,6 @@ function boxscoreUrl(cell) {
   const ymd = cell.d.replaceAll('-', '');
   if (SPORT === 'nba') {
     if (!cell.m) return null;
-    // Matchup is "TEAM vs. OPP" (home) or "TEAM @ OPP" (away).
     let home;
     if (cell.m.includes(' @ ')) home = cell.m.split(' @ ')[1].trim();
     else if (cell.m.includes(' vs. ') || cell.m.includes(' vs ')) {
@@ -1239,13 +1388,21 @@ function boxscoreUrl(cell) {
     home = NBA_TO_BBR_TEAM[home] || home;
     return `https://www.basketball-reference.com/boxscores/${ymd}0${home}.html`;
   }
+  if (SPORT === 'wnba') {
+    if (!cell.m) return null;
+    let home;
+    if (cell.m.includes(' @ ')) home = cell.m.split(' @ ')[1].trim();
+    else if (cell.m.includes(' vs. ') || cell.m.includes(' vs ')) {
+      home = cell.m.split(/ vs\.? /)[0].trim();
+    } else return null;
+    home = WNBA_TO_BBR_TEAM[home] || home;
+    return `https://www.basketball-reference.com/wnba/boxscores/${ymd}0${home}.html`;
+  }
   if (SPORT === 'nfl') {
     if (!cell.g) return null;
-    // PFR-slug game IDs (1933-1998 historical data) are already the URL key.
     if (/^\d{8}0[a-z]{3}$/i.test(cell.g)) {
       return `https://www.pro-football-reference.com/boxscores/${cell.g.toLowerCase()}.htm`;
     }
-    // nflverse format: "YYYY_WW_AWAY_HOME" — last token is home.
     const parts = cell.g.split('_');
     if (parts.length !== 4) return null;
     const home = parts[3];
@@ -1253,44 +1410,37 @@ function boxscoreUrl(cell) {
     return `https://www.pro-football-reference.com/boxscores/${ymd}0${pfr}.htm`;
   }
   if (SPORT === 'mlb') {
-    // MLB Stats API integer gamePk routes cleanly to mlb.com's gameday box.
     return cell.g ? `https://www.mlb.com/gameday/${cell.g}/final/box` : null;
   }
   return null;
 }
 let SPORT = 'nba';
-// 'game' = per-game box scores, 'season' = player-season view.
-// Switches which tally folder loadTally() fetches from.
 let MODE = 'game';
-// Season mode (NBA/NFL): when on, hide seasons whose games played fall below
-// the sport's threshold. On by default. MLB season totals have no games filter.
 let MIN_GAMES = true;
-// Per-sport games threshold. Used to (a) pick the pre-filtered season dataset
-// in loadTally and (b) show/hide the Min Games toggle. The actual filtering of
-// sub-threshold seasons happens in the export, not here. Must match the MIN_GP
-// constants in nba/export_static.py and nfl/export_static.py.
-const MIN_GAMES_MIN = { nba: 20, nfl: 6 };
+const MIN_GAMES_MIN = { nba: 20, nfl: 6, wnba: 15 };
 const STATS_META = {};
 
-// --- MLB position cubes -----------------------------------------------------
-// MLB ships one distinct-line dump per position+mode; the cube for any 3 axes
-// is rolled up in the browser by rollupCube() below. Batting
-// positions expose batting axes; P and All add pitching (cross-domain).
 let POSITION = 'all';
-let WL_FILTER = null;        // 1=wins, 0=losses, null=all (pitching game only)
-const DUMP_CACHE = {};       // `${pos}/${mode}` -> loaded dump
-const MLB_POSITIONS = [
-  ['all', 'All'], ['p', 'P'], ['c', 'C'], ['1b', '1B'], ['2b', '2B'],
-  ['3b', '3B'], ['ss', 'SS'], ['lf', 'LF'], ['cf', 'CF'], ['rf', 'RF'], ['dh', 'DH'],
+let WL_W = true, WL_L = true;
+const DUMP_CACHE = {};
+const MLB_POS_PRIMARY = [['all', 'All'], ['p', 'P'], ['pos', 'POS']];
+const MLB_POS_FIELD = [
+  ['c', 'C'], ['1b', '1B'], ['2b', '2B'], ['3b', '3B'], ['ss', 'SS'],
+  ['lf', 'LF'], ['cf', 'CF'], ['rf', 'RF'], ['dh', 'DH'],
 ];
-const MLB_FULL_POS = new Set(['all', 'p']);   // positions with pitching axes + W/L filter
+const MLB_FULL_POS = new Set(['all', 'p']);
+
+function wlFilterValue() {
+  if (WL_W && WL_L) return null;
+  if (WL_W) return 1;
+  if (WL_L) return 0;
+  return -1;
+}
 
 function rollupCube(dump, x, y, z, wlFilter) {
   const idx = {}; dump.axes.forEach((k, i) => idx[k] = i);
   const ix = idx[x], iy = idx[y], iz = idx[z];
   const game = dump.mode === 'game';
-  // Drop 0-pitch games when Pitches is an axis (pre-1988 NP is untracked and
-  // shows as 0, creating a spurious spike at the origin).
   const dz0 = x === 'p_np', dz1 = y === 'p_np', dz2 = z === 'p_np';
   const cells = new Map();
   for (const ln of dump.lines) {
@@ -1345,10 +1495,6 @@ async function getDump() {
   const mode = MODE === 'season' ? 'season' : 'game';
   const key = `${POSITION}/${mode}`;
   if (DUMP_CACHE[key]) return DUMP_CACHE[key];
-  // Dumps are gzipped in the repo (the all/p game dumps exceed 100 MB raw).
-  // Fetch the .gz and inflate client-side via DecompressionStream. If the host
-  // already decompressed it (served with Content-Encoding: gzip), fetch hands us
-  // plain JSON — so fall back to parsing the raw bytes when inflation fails.
   const url = `mlb/${POSITION}/${mode}.json.gz`;
   statusEl.textContent = `loading ${POSITION.toUpperCase()} ${mode} data…`;
   const r = await fetch(url);
@@ -1359,7 +1505,6 @@ async function getDump() {
     const stream = new Response(bytes).body.pipeThrough(new DecompressionStream('gzip'));
     d = JSON.parse(await new Response(stream).text());
   } catch (e) {
-    // already-decompressed (or DecompressionStream unavailable) — parse as-is.
     d = JSON.parse(new TextDecoder().decode(bytes));
   }
   DUMP_CACHE[key] = d;
@@ -1367,39 +1512,30 @@ async function getDump() {
 }
 
 async function loadStats() {
-  // MLB axis lists are per position AND per mode (season adds rate stats);
-  // NBA/NFL have a single sport-wide stats.json.
   const url = (SPORT === 'mlb')
     ? `mlb/${POSITION}/${MODE === 'season' ? 'stats-season' : 'stats'}.json`
     : `${SPORT}/stats.json`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ` + r.status);
   const stats = (await r.json()).stats;
-  // Reset and refill — different sport, different stat keys.
   for (const k of Object.keys(STATS_META)) delete STATS_META[k];
   for (const s of stats) STATS_META[s.key] = s;
   return stats;
 }
 
 async function loadTally(x, y, z) {
-  // MLB: roll the position dump up onto the chosen axes in-browser (no per-combo
-  // fetch). The dump is cached, so axis/W-L changes are instant.
   if (SPORT === 'mlb') {
     const dump = await getDump();
-    const wl = (MODE !== 'season' && MLB_FULL_POS.has(POSITION)) ? WL_FILTER : null;
+    const wl = (MODE !== 'season' && MLB_FULL_POS.has(POSITION)) ? wlFilterValue() : null;
     const r = rollupCube(dump, x, y, z, wl);
     const mkAxis = (k, max) => ({ key: k, label: STATS_META[k].label, color: STATS_META[k].color, max });
     return {
       axes: { x: mkAxis(x, r.axes.x.max), y: mkAxis(y, r.axes.y.max), z: mkAxis(z, r.axes.z.max) },
-      cells: r.cells,        // already in user (x,y,z) order
+      cells: r.cells,
       leaderboard: r.leaderboard,
     };
   }
   const fileKeys = [x, y, z].slice().sort();
-  // Season mode swaps to the pre-filtered tally when Min Games is on: the export
-  // bakes sub-threshold seasons out entirely, so the tally, leaderboard, and
-  // recent list are all computed over qualifying seasons only. Sports without a
-  // games threshold (MLB) always use the plain season tally.
   let dir;
   if (MODE === 'season') {
     dir = (MIN_GAMES && MIN_GAMES_MIN[SPORT] != null) ? 'tally-season-min' : 'tally-season';
@@ -1415,9 +1551,8 @@ async function loadTally(x, y, z) {
   }
   const data = await r.json();
 
-  // Remap canonical-alphabetical cells/axes into the user's chosen order.
   const userKeys = [x, y, z];
-  const map = userKeys.map(k => fileKeys.indexOf(k));   // user axis -> file axis
+  const map = userKeys.map(k => fileKeys.indexOf(k));
   const fileMaxes = [data.axes.x.max, data.axes.y.max, data.axes.z.max];
 
   const mkAxis = (k, idx) => ({
@@ -1437,16 +1572,13 @@ async function loadTally(x, y, z) {
     return {
       p: v[map[0]], r: v[map[1]], a: v[map[2]],
       n: c.n, d: c.d, pl: c.pl, t: c.t, m: c.m, g: c.g, gp: c.gp, pid: c.pid,
-      recent: c.recent,   // up-to-5 most-recent occurrences (n>=2 cells only)
+      recent: c.recent,
     };
   });
 
   return { axes, cells, leaderboard: data.leaderboard };
 }
 
-// Tracks the last successful (x, y, z). Used to swap axes when the user
-// picks a stat already held by another axis, instead of bumping that axis
-// to an unrelated stat.
 let lastAxes = [];
 
 function fillDropdowns(stats, defaults) {
@@ -1464,7 +1596,6 @@ function currentAxes() {
 
 async function refresh() {
   const [x, y, z] = currentAxes();
-  // Prevent duplicates: bump dupe to a different stat from the dropdown order
   const set = new Set([x, y, z]);
   if (set.size !== 3) {
     statusEl.textContent = 'pick three distinct stats';
@@ -1472,11 +1603,8 @@ async function refresh() {
   }
   try {
     const data = await loadTally(x, y, z);
-    rawData = data;            // keep the 1× cells so coarseness can re-bin without refetch
+    rawData = data;
     renderCube();
-    // Leaderboard is now computed client-side from state.instanceIndex so
-    // year/player filters stay in sync. buildCube() already triggered
-    // recomputeLeaderboard() via applyVisibilityFilters().
     lbHintEl.textContent = `Most Unique ${data.axes.x.label}/${data.axes.y.label}/${data.axes.z.label} Lines`;
     axisHintEl.textContent = `${data.axes.x.label} × ${data.axes.y.label} × ${data.axes.z.label}`;
     detailEl.style.display = 'none';
@@ -1487,9 +1615,6 @@ async function refresh() {
   }
 }
 
-// When the user picks a stat already held by another axis, SWAP — the
-// other axis takes whatever the changed axis used to hold. Falls back to
-// "first unused stat" only if we don't have a prior value to swap with.
 function enforceDistinct(changed) {
   const els = [axisXEl, axisYEl, axisZEl];
   const vals = els.map(e => e.value);
@@ -1500,7 +1625,6 @@ function enforceDistinct(changed) {
     els[dupIdx].value = prev;
     return;
   }
-  // Fallback (shouldn't normally hit): pick any unused stat.
   const used = new Set(vals);
   for (const opt of els[dupIdx].options) {
     if (!used.has(opt.value)) { els[dupIdx].value = opt.value; return; }
@@ -1520,9 +1644,7 @@ async function loadSport(sport) {
   document.getElementById('cubeTitle').textContent = SPORTS[sport].title;
   document.title = 'BoxScorigami';
   location.hash = `sport=${sport}`;
-  // The 5×/6× coarseness buttons are MLB-only (CSS keys off this class).
   document.body.classList.toggle('sport-mlb', sport === 'mlb');
-  // Reset the per-game/season toggle, injured filter, and coarseness on switch.
   MODE = 'game';
   MIN_GAMES = true;
   COARSE = 1;
@@ -1532,24 +1654,18 @@ async function loadSport(sport) {
   document.querySelectorAll('#coarseToggle button').forEach(x =>
     x.classList.toggle('active', x.dataset.k === '1'));
   updateMinGamesToggle();
-  // Player names are sport-specific — clear any prior chips on switch.
   blockedPlayers.clear();
   refreshBlockedLower();
   renderPlayerChips();
-  // Reset reverse-mode along with the chips.
   reversePlayerFilter = false;
   const revBtn = document.getElementById('playerFilterReverse');
   revBtn.classList.remove('active');
   revBtn.textContent = 'Reverse';
-  // Reset year filter inputs; updateYearBounds() runs after data load.
   document.getElementById('yearFrom').value = '';
   document.getElementById('yearTo').value = '';
-  // MLB-only position selector; reset to All on (re)entry.
   const isMlb = sport === 'mlb';
   document.getElementById('posBar').style.display = isMlb ? 'flex' : 'none';
-  if (isMlb) { POSITION = 'all'; WL_FILTER = null; buildPosBar();
-    document.querySelectorAll('#wlBar button').forEach(b => b.classList.toggle('active', b.dataset.wl === 'all')); }
-  updateWlBar();
+  if (isMlb) { POSITION = 'all'; WL_W = WL_L = true; buildPosBar(); }
   try {
     statusEl.textContent = `loading ${SPORTS[sport].label} ...`;
     const stats = await loadStats();
@@ -1565,22 +1681,31 @@ document.querySelectorAll('#tabs button').forEach(b => {
   b.addEventListener('click', () => loadSport(b.dataset.sport));
 });
 
-// --- MLB position selector + W/L filter -------------------------------------
 function buildPosBar() {
   const bar = document.getElementById('posBar');
-  bar.innerHTML = MLB_POSITIONS.map(([k, l]) =>
-    `<button data-pos="${k}" class="${k === POSITION ? 'active' : ''}">${l}</button>`).join('');
-  bar.querySelectorAll('button').forEach(b =>
+  const posBtn = ([k, l]) =>
+    `<button data-pos="${k}" class="${k === POSITION ? 'active' : ''}">${l}</button>`;
+  let html = MLB_POS_PRIMARY.map(posBtn).join('')
+    + '<span class="pos-sep"></span>' + MLB_POS_FIELD.map(posBtn).join('');
+  if (MLB_FULL_POS.has(POSITION) && MODE !== 'season') {
+    html += '<span class="pos-sep"></span>'
+      + `<button data-wl="W" class="${WL_W ? 'active' : ''}">W</button>`
+      + `<button data-wl="L" class="${WL_L ? 'active' : ''}">L</button>`;
+  }
+  bar.innerHTML = html;
+  bar.querySelectorAll('button[data-pos]').forEach(b =>
     b.addEventListener('click', () => setPosition(b.dataset.pos)));
+  bar.querySelectorAll('button[data-wl]').forEach(b =>
+    b.addEventListener('click', () => setWl(b.dataset.wl)));
 }
 
-function updateWlBar() {
-  document.getElementById('wlBar').style.display =
-    (SPORT === 'mlb' && MLB_FULL_POS.has(POSITION) && MODE !== 'season') ? 'flex' : 'none';
+function setWl(which) {
+  if (which === 'W') WL_W = !WL_W; else WL_L = !WL_L;
+  document.querySelector('#posBar button[data-wl="W"]').classList.toggle('active', WL_W);
+  document.querySelector('#posBar button[data-wl="L"]').classList.toggle('active', WL_L);
+  refresh();
 }
 
-// Pick 3 valid axes for the current stat list: keep the current picks if they
-// all still exist, else fall back to MLB defaults, then any remaining keys.
 function mlbAxisDefaults(stats) {
   const keys = new Set(stats.map(s => s.key));
   const cur = [axisXEl.value, axisYEl.value, axisZEl.value];
@@ -1590,12 +1715,11 @@ function mlbAxisDefaults(stats) {
   return pick.slice(0, 3);
 }
 
-// Reload the per-position+mode axis list, repopulate dropdowns, re-render.
 async function reloadMlbAxes() {
   try {
     const stats = await loadStats();
     fillDropdowns(stats, mlbAxisDefaults(stats));
-    updateWlBar();
+    buildPosBar();
     await refresh();
   } catch (err) { statusEl.textContent = 'ERROR: ' + err.message; console.error(err); }
 }
@@ -1603,22 +1727,11 @@ async function reloadMlbAxes() {
 async function setPosition(pos) {
   if (pos === POSITION) return;
   POSITION = pos;
-  WL_FILTER = null;
+  WL_W = WL_L = true;
   buildPosBar();
-  document.querySelectorAll('#wlBar button').forEach(b => b.classList.toggle('active', b.dataset.wl === 'all'));
   await reloadMlbAxes();
 }
 
-document.querySelectorAll('#wlBar button').forEach(b => {
-  b.addEventListener('click', () => {
-    WL_FILTER = b.dataset.wl === 'all' ? null : parseInt(b.dataset.wl, 10);
-    document.querySelectorAll('#wlBar button').forEach(x => x.classList.toggle('active', x === b));
-    refresh();   // rollup from cached dump — no refetch
-  });
-});
-
-// The injured-seasons toggle only applies in season mode for sports with a
-// threshold (NBA/NFL); hide it otherwise and reflect current on/off state.
 function updateMinGamesToggle() {
   const btn = document.getElementById('injuredToggle');
   const show = MODE === 'season' && MIN_GAMES_MIN[SPORT] != null;
@@ -1634,22 +1747,17 @@ document.querySelectorAll('#modeToggle button').forEach(b => {
     document.querySelectorAll('#modeToggle button').forEach(x =>
       x.classList.toggle('active', x.dataset.mode === MODE));
     updateMinGamesToggle();
-    // MLB game/season have different axis lists (season adds rate stats), so
-    // reload the stat list + dropdowns; other sports just refetch.
     if (SPORT === 'mlb') reloadMlbAxes();
     else refresh();
   });
 });
 
-// Min-games toggle swaps between the pre-filtered and unfiltered season tally
-// datasets, so it refetches rather than re-filtering client-side.
 document.getElementById('injuredToggle').addEventListener('click', () => {
   MIN_GAMES = !MIN_GAMES;
   updateMinGamesToggle();
   refresh();
 });
 
-// Coarseness re-bins the cached rawData and rebuilds — no refetch.
 document.querySelectorAll('#coarseToggle button').forEach(b => {
   b.addEventListener('click', () => {
     const k = parseInt(b.dataset.k, 10);
@@ -1657,13 +1765,12 @@ document.querySelectorAll('#coarseToggle button').forEach(b => {
     COARSE = k;
     document.querySelectorAll('#coarseToggle button').forEach(x =>
       x.classList.toggle('active', parseInt(x.dataset.k, 10) === COARSE));
-    detailEl.style.display = 'none';   // a selected voxel no longer exists post-rebin
-    renderCube();
+    detailEl.style.display = 'none';
+    renderCube(true);
   });
 });
 
 (async () => {
-  // Honor #sport=nfl in the URL on first load, default to NBA.
   const m = /sport=(\w+)/.exec(location.hash);
   const initial = m && SPORTS[m[1]] ? m[1] : 'nba';
   await loadSport(initial);
@@ -1675,6 +1782,7 @@ function animate() {
   requestAnimationFrame(animate);
 }
 animate();
+
 </script>
 </body>
 </html>
