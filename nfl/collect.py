@@ -402,6 +402,38 @@ def scrape_games(conn, browser, start, end, retry_failed, delay):
     print(f"\nDONE. {success:,} succeeded, {fail:,} failed in {(time.time()-t0)/3600:.1f}h")
 
 
+def backfill_opponent(conn):
+    games = conn.execute("""
+        SELECT game_id, GROUP_CONCAT(DISTINCT team_abbr) AS teams
+        FROM player_games
+        WHERE team_abbr IS NOT NULL
+        GROUP BY game_id
+    """).fetchall()
+    print(f"scanning {len(games):,} games...")
+    fixed = weird = 0
+    for g in games:
+        teams = [t for t in (g["teams"] or "").split(",") if t]
+        if len(teams) != 2:
+            weird += 1
+            continue
+        a, b = teams
+        conn.execute(
+            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
+            (b, f"{a} vs {b}", g["game_id"], a),
+        )
+        conn.execute(
+            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
+            (a, f"{b} vs {a}", g["game_id"], b),
+        )
+        fixed += 1
+    conn.commit()
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM player_games WHERE matchup IS NULL"
+    ).fetchone()[0]
+    print(f"fixed {fixed:,} games  ({weird:,} skipped: not exactly 2 teams; "
+          f"{remaining:,} rows still NULL)")
+
+
 def show_stats(conn):
     seas = conn.execute("SELECT COUNT(*) FROM seasons_enumerated").fetchone()[0]
     total = conn.execute("SELECT COUNT(*) FROM games_to_scrape").fetchone()[0]
@@ -433,6 +465,7 @@ def main():
     s.add_argument("--delay", type=float, default=DEFAULT_DELAY)
 
     sub.add_parser("stats", help="show progress")
+    sub.add_parser("backfill-opponent", help="Repair opponent/matchup from team_abbr (no network)")
 
     args = ap.parse_args()
     conn = open_db()
@@ -440,6 +473,9 @@ def main():
 
     if args.cmd == "stats":
         show_stats(conn)
+        return
+    if args.cmd == "backfill-opponent":
+        backfill_opponent(conn)
         return
 
     with Browser() as browser:

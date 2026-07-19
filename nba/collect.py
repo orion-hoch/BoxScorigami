@@ -89,6 +89,12 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    # CREATE TABLE IF NOT EXISTS is a no-op on an existing db, so a stat added to
+    # STAT_COLUMNS later needs this to reach an already-populated player_games.
+    have = {r[1] for r in conn.execute("PRAGMA table_info(player_games)")}
+    for col in STAT_COLUMNS:
+        if col not in have:
+            conn.execute(f"ALTER TABLE player_games ADD COLUMN {col} INTEGER")
     conn.commit()
 
 
