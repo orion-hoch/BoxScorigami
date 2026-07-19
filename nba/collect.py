@@ -30,7 +30,7 @@ LEAGUES = {
 }
 
 STAT_COLUMNS = [
-    "pts", "reb", "ast",
+    "pts", "reb", "oreb", "dreb", "ast",
     "stl", "blk", "tov", "pf",
     "fgm", "fga", "fg3m", "fg3a", "ftm", "fta",
 ]

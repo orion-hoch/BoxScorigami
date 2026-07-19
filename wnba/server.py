@@ -13,6 +13,8 @@ DB_PATH = HERE / "wnba.sqlite"
 STATS = {
     "pts":  {"col": "pts",  "label": "Points",          "color": "#ff6b6b"},
     "reb":  {"col": "reb",  "label": "Rebounds",        "color": "#6bd06b"},
+    "oreb": {"col": "oreb", "label": "Off. Rebounds",   "color": "#3fae5a"},
+    "dreb": {"col": "dreb", "label": "Def. Rebounds",   "color": "#9ade8c"},
     "ast":  {"col": "ast",  "label": "Assists",         "color": "#6b9eff"},
     "stl":  {"col": "stl",  "label": "Steals",          "color": "#f7c948"},
     "blk":  {"col": "blk",  "label": "Blocks",          "color": "#a07bff"},
