@@ -8,7 +8,6 @@ import sys
 import time
 from pathlib import Path
 
-import statsapi
 import requests
 
 DB_PATH = Path(__file__).resolve().parent / "mlb.sqlite"
@@ -25,29 +24,22 @@ def _to_int(v):
     except (ValueError, TypeError):
         return None
 
-RAW_BATTING_FIELDS = [
-    ("ab",      "atBats"),
-    ("r",       "runs"),
-    ("h",       "hits"),
-    ("doubles", "doubles"),
-    ("triples", "triples"),
-    ("hr",      "homeRuns"),
-    ("rbi",     "rbi"),
-    ("bb",      "baseOnBalls"),
-    ("k",       "strikeOuts"),
-    ("sb",      "stolenBases"),
+SB_GAME_TYPES = "R,D,L,W,F"
+SB_HIT_FIELDS = [
+    ("ab", "atBats"), ("r", "runs"), ("h", "hits"), ("doubles", "doubles"),
+    ("triples", "triples"), ("hr", "homeRuns"), ("rbi", "rbi"),
+    ("bb", "baseOnBalls"), ("k", "strikeOuts"), ("sb", "stolenBases"),
+]
+SB_PIT_FIELDS = [
+    ("k", "strikeOuts"), ("bb", "baseOnBalls"), ("h", "hits"), ("er", "earnedRuns"),
+    ("r", "runs"), ("hr", "homeRuns"), ("p", "numberOfPitches"), ("s", "strikes"),
+    ("wp", "wildPitches"), ("bk", "balks"), ("sv", "saves"), ("bs", "blownSaves"),
+    ("sho", "shutouts"), ("cg", "completeGames"),
 ]
 
-RAW_PITCHING_FIELDS = [
-    ("h",  "hits"),
-    ("r",  "runs"),
-    ("er", "earnedRuns"),
-    ("bb", "baseOnBalls"),
-    ("k",  "strikeOuts"),
-    ("hr", "homeRuns"),
-    ("p",  "numberOfPitches"),
-    ("s",  "strikes"),
-]
+STAT_COLUMNS = [c for c, _ in SB_HIT_FIELDS]
+PITCH_COLUMNS = ["k", "bb", "h", "er", "r", "hr", "outs", "p", "s",
+                 "wp", "bk", "won", "sv", "bs", "sho", "cg"]
 
 
 def ip_to_outs(ip):
@@ -64,95 +56,6 @@ def ip_to_outs(ip):
         return None
 
 
-def fetch_boxscore(game_id):
-    try:
-        return statsapi.boxscore_data(game_id)
-    except Exception as primary:
-        try:
-            return _boxscore_from_raw(game_id)
-        except Exception:
-            raise primary
-
-
-def _boxscore_from_raw(game_id):
-    url = f"https://statsapi.mlb.com/api/v1/game/{game_id}/boxscore"
-    resp = requests.get(url, timeout=20)
-    resp.raise_for_status()
-    raw = resp.json()
-    out = {
-        "teamInfo": {
-            side: {"abbreviation": (raw.get("teams", {}).get(side, {})
-                                       .get("team", {}).get("abbreviation"))}
-            for side in ("away", "home")
-        },
-        "awayBatters": [],
-        "homeBatters": [],
-        "awayPitchers": [],
-        "homePitchers": [],
-    }
-    for side in ("away", "home"):
-        team = raw.get("teams", {}).get(side, {})
-        players = team.get("players", {})
-        ids = team.get("batters") or [
-            int(k[2:]) for k, p in players.items()
-            if (p.get("stats") or {}).get("batting")
-        ]
-        for pid in ids:
-            p = players.get(f"ID{pid}") or {}
-            stats = (p.get("stats") or {}).get("batting") or {}
-            row = {
-                "personId": pid,
-                "name": (p.get("person") or {}).get("fullName"),
-            }
-            for db_key, api_key in RAW_BATTING_FIELDS:
-                v = stats.get(api_key)
-                row[db_key] = "" if v is None else str(v)
-            out[f"{side}Batters"].append(row)
-
-        pit_ids = team.get("pitchers") or [
-            int(k[2:]) for k, p in players.items()
-            if (p.get("stats") or {}).get("pitching")
-        ]
-        for pid in pit_ids:
-            p = players.get(f"ID{pid}") or {}
-            stats = (p.get("stats") or {}).get("pitching") or {}
-            row = {
-                "personId": pid,
-                "name": (p.get("person") or {}).get("fullName"),
-                "ip": "" if stats.get("inningsPitched") is None else str(stats.get("inningsPitched")),
-            }
-            for db_key, api_key in RAW_PITCHING_FIELDS:
-                v = stats.get(api_key)
-                row[db_key] = "" if v is None else str(v)
-            out[f"{side}Pitchers"].append(row)
-    return out
-
-STAT_COLUMNS = [
-    ("ab",      "ab"),
-    ("r",       "r"),
-    ("h",       "h"),
-    ("doubles", "doubles"),
-    ("triples", "triples"),
-    ("hr",      "hr"),
-    ("rbi",     "rbi"),
-    ("bb",      "bb"),
-    ("k",       "k"),
-    ("sb",      "sb"),
-]
-
-PITCH_COLUMNS = [
-    ("k",    "k"),
-    ("bb",   "bb"),
-    ("h",    "h"),
-    ("er",   "er"),
-    ("r",    "r"),
-    ("hr",   "hr"),
-    ("outs", "outs"),
-    ("p",    "p"),
-    ("s",    "s"),
-]
-
-
 def open_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -160,8 +63,9 @@ def open_db():
 
 
 def init_db(conn):
-    stat_cols_sql = ",\n            ".join(f"{c} INTEGER" for c, _ in STAT_COLUMNS)
-    pitch_cols_sql = ",\n            ".join(f"{c} INTEGER" for c, _ in PITCH_COLUMNS)
+    stat_cols_sql = ",\n            ".join(f"{c} INTEGER" for c in STAT_COLUMNS)
+    pitch_cols_sql = ",\n            ".join(f"{c} INTEGER" for c in PITCH_COLUMNS)
+    gb_cols_sql = ",\n        ".join(f"{c} INTEGER" for c, _ in GB_FIELDS)
     conn.executescript(f"""
     CREATE TABLE IF NOT EXISTS player_games (
         game_id        INTEGER NOT NULL,
@@ -232,283 +136,38 @@ def init_db(conn):
         error_msg  TEXT,
         fetched_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS game_position (
+        game_id INTEGER NOT NULL, player_id INTEGER NOT NULL,
+        season INTEGER, game_date TEXT, position TEXT,
+        PRIMARY KEY (game_id, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS game_batting (
+        game_id INTEGER NOT NULL, player_id INTEGER NOT NULL,
+        season INTEGER, game_date TEXT,
+        {gb_cols_sql},
+        PRIMARY KEY (game_id, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS game_positions_done (
+        player_id INTEGER NOT NULL, season INTEGER NOT NULL,
+        status TEXT, error_msg TEXT, fetched_at TEXT,
+        PRIMARY KEY (player_id, season)
+    );
+
+    CREATE TABLE IF NOT EXISTS game_batting_done (
+        player_id INTEGER NOT NULL, season INTEGER NOT NULL,
+        status TEXT, error_msg TEXT, fetched_at TEXT,
+        PRIMARY KEY (player_id, season)
+    );
+
+    CREATE TABLE IF NOT EXISTS pitcher_extras_done (
+        player_id INTEGER NOT NULL, season INTEGER NOT NULL,
+        status TEXT, error_msg TEXT, fetched_at TEXT,
+        PRIMARY KEY (player_id, season)
+    );
     """)
-
-
-def migrate_db(conn):
-    """Add pitching-backfill tracking columns to an older DB."""
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(games_to_scrape)")}
-    added = False
-    if "pitch_status" not in cols:
-        conn.execute("ALTER TABLE games_to_scrape ADD COLUMN pitch_status TEXT")
-        added = True
-    if "pitch_error" not in cols:
-        conn.execute("ALTER TABLE games_to_scrape ADD COLUMN pitch_error TEXT")
-    if "pitch_scraped_at" not in cols:
-        conn.execute("ALTER TABLE games_to_scrape ADD COLUMN pitch_scraped_at TEXT")
-    if added:
-        n = conn.execute(
-            "UPDATE games_to_scrape SET pitch_status='done' "
-            "WHERE pitch_status IS NULL "
-            "AND game_id IN (SELECT DISTINCT game_id FROM pitcher_games)"
-        ).rowcount
-        print(f"[migrate] added pitching-backfill tracking; "
-              f"marked {n:,} already-backfilled games as done")
-    conn.commit()
-
-
-def enumerate_season(conn, season, delay):
-    already = conn.execute(
-        "SELECT n_games FROM seasons_enumerated WHERE season=?", (season,)
-    ).fetchone()
-    if already:
-        print(f"[skip] {season} already enumerated ({already[0]} games)")
-        return
-
-    print(f"[fetch] schedule {season} ...")
-    try:
-        sched = statsapi.schedule(
-            start_date=f"{season}-01-01",
-            end_date=f"{season}-12-31",
-        )
-    except Exception as e:
-        print(f"  ERROR: {e}", file=sys.stderr)
-        return
-
-    rows = []
-    for g in sched:
-        if g.get('status') != 'Final':
-            continue
-        rows.append({
-            "game_id": g["game_id"],
-            "game_date": g["game_date"],
-            "season": season,
-            "game_type": g.get("game_type"),
-            "home_abbr": None,
-            "away_abbr": None,
-        })
-
-    conn.executemany(
-        """INSERT OR IGNORE INTO games_to_scrape
-           (game_id, game_date, season, game_type, home_abbr, away_abbr)
-           VALUES (:game_id, :game_date, :season, :game_type, :home_abbr, :away_abbr)""",
-        rows,
-    )
-    conn.execute(
-        "INSERT OR REPLACE INTO seasons_enumerated (season, season_type, n_games, enumerated_at) "
-        "VALUES (?, 'ALL', ?, ?)",
-        (season, len(rows), dt.datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    print(f"  -> {len(rows)} final games")
-    time.sleep(delay)
-
-
-def parse_batters(bd, side, team_abbr, opp_abbr):
-    batters = bd.get(f"{side}Batters", [])
-    for b in batters:
-        pid = b.get("personId")
-        if not pid or "substitution" in b and b.get("substitution") and not b.get("ab"):
-            pass
-
-        def i(key):
-            v = b.get(key, "")
-            if v in ("", None, "-"):
-                return None
-            try:
-                return int(v)
-            except ValueError:
-                return None
-
-        if pid is None:
-            continue
-        yield {
-            "player_id":   pid,
-            "player_name": b.get("name") or b.get("namefield"),
-            "team_abbr":   team_abbr,
-            "opponent":    opp_abbr,
-            "matchup":     f"{team_abbr} vs {opp_abbr}" if team_abbr and opp_abbr else None,
-            "ab":      i("ab"),
-            "r":       i("r"),
-            "h":       i("h"),
-            "doubles": i("doubles"),
-            "triples": i("triples"),
-            "hr":      i("hr"),
-            "rbi":     i("rbi"),
-            "bb":      i("bb"),
-            "k":       i("k"),
-            "sb":      i("sb"),
-        }
-
-
-def parse_pitchers(bd, side, team_abbr, opp_abbr):
-    for p in bd.get(f"{side}Pitchers", []):
-        pid = p.get("personId")
-        if not pid:
-            continue
-
-        def i(key):
-            v = p.get(key, "")
-            if v in ("", None, "-"):
-                return None
-            try:
-                return int(v)
-            except ValueError:
-                return None
-
-        yield {
-            "player_id":   pid,
-            "player_name": p.get("name") or p.get("namefield"),
-            "team_abbr":   team_abbr,
-            "opponent":    opp_abbr,
-            "matchup":     f"{team_abbr} vs {opp_abbr}" if team_abbr and opp_abbr else None,
-            "k":    i("k"),
-            "bb":   i("bb"),
-            "h":    i("h"),
-            "er":   i("er"),
-            "r":    i("r"),
-            "hr":   i("hr"),
-            "outs": ip_to_outs(p.get("ip")),
-            "p":    i("p"),
-            "s":    i("s"),
-        }
-
-
-def insert_game(conn, game, bd):
-    info = bd.get("teamInfo") or {}
-    home_abbr = info.get("home", {}).get("abbreviation")
-    away_abbr = info.get("away", {}).get("abbreviation")
-
-    sql = (
-        "INSERT OR REPLACE INTO player_games "
-        "(game_id, game_date, season, game_type, player_id, player_name, "
-        " team_abbr, opponent, matchup, "
-        + ", ".join(c for c, _ in STAT_COLUMNS) +
-        ") VALUES ("
-        ":game_id, :game_date, :season, :game_type, :player_id, :player_name, "
-        ":team_abbr, :opponent, :matchup, "
-        + ", ".join(f":{c}" for c, _ in STAT_COLUMNS) +
-        ")"
-    )
-
-    pitch_sql = (
-        "INSERT OR REPLACE INTO pitcher_games "
-        "(game_id, game_date, season, game_type, player_id, player_name, "
-        " team_abbr, opponent, matchup, "
-        + ", ".join(c for c, _ in PITCH_COLUMNS) +
-        ") VALUES ("
-        ":game_id, :game_date, :season, :game_type, :player_id, :player_name, "
-        ":team_abbr, :opponent, :matchup, "
-        + ", ".join(f":{c}" for c, _ in PITCH_COLUMNS) +
-        ")"
-    )
-
-    gmeta = {"game_id": game["game_id"], "game_date": game["game_date"],
-             "season": game["season"], "game_type": game["game_type"]}
-
-    rows = []
-    for r in parse_batters(bd, "away", away_abbr, home_abbr):
-        rows.append({**r, **gmeta})
-    for r in parse_batters(bd, "home", home_abbr, away_abbr):
-        rows.append({**r, **gmeta})
-    if rows:
-        conn.executemany(sql, rows)
-
-    pitch_rows = []
-    for r in parse_pitchers(bd, "away", away_abbr, home_abbr):
-        pitch_rows.append({**r, **gmeta})
-    for r in parse_pitchers(bd, "home", home_abbr, away_abbr):
-        pitch_rows.append({**r, **gmeta})
-    if pitch_rows:
-        conn.executemany(pitch_sql, pitch_rows)
-
-    conn.execute(
-        "UPDATE games_to_scrape SET home_abbr=?, away_abbr=? WHERE game_id=?",
-        (home_abbr, away_abbr, game["game_id"]),
-    )
-    return len(rows), len(pitch_rows)
-
-
-def scrape_games(conn, start, end, retry_failed, delay):
-    where = "status = 'pending'"
-    if retry_failed:
-        where = "status IN ('pending','error')"
-    if start is not None:
-        where += f" AND season >= {start}"
-    if end is not None:
-        where += f" AND season <= {end}"
-
-    games = conn.execute(
-        f"SELECT * FROM games_to_scrape WHERE {where} ORDER BY season, game_date, game_id"
-    ).fetchall()
-    if not games:
-        print("Nothing to scrape.")
-        return
-
-    from collections import deque
-    total = len(games)
-    print(f"Scraping {total:,} boxscores...")
-    t0 = time.time()
-    success = 0
-    fail = 0
-    skipped = 0
-    recent = deque(maxlen=30)
-    EMPTY_STREAK_LIMIT = 8
-    empty_streak = 0
-    current_season = None
-    dead_seasons = set()
-
-    for i, g in enumerate(games, 1):
-        season = g["season"]
-        if season != current_season:
-            empty_streak = 0
-            current_season = season
-
-        if season in dead_seasons:
-            conn.execute(
-                "UPDATE games_to_scrape SET status='empty', error_msg='season has no batter data', scraped_at=? WHERE game_id=?",
-                (dt.datetime.utcnow().isoformat(), g["game_id"]),
-            )
-            conn.commit()
-            skipped += 1
-            if skipped % 200 == 0:
-                print(f"[{i:>6}/{total}] {season} {g['game_id']}  (skipped {skipped} from dead seasons)")
-            continue
-
-        t_start = time.time()
-        try:
-            bd = fetch_boxscore(g["game_id"])
-            nb, npit = insert_game(conn, dict(g), bd)
-            conn.execute(
-                "UPDATE games_to_scrape SET status='done', error_msg=NULL, scraped_at=? WHERE game_id=?",
-                (dt.datetime.utcnow().isoformat(), g["game_id"]),
-            )
-            conn.commit()
-            success += 1
-            if nb + npit == 0:
-                empty_streak += 1
-                if empty_streak >= EMPTY_STREAK_LIMIT:
-                    dead_seasons.add(season)
-                    print(f"  >> {season}: {empty_streak} empty games in a row — marking rest of season as 'empty'")
-            else:
-                empty_streak = 0
-            recent.append(time.time() - t_start + delay)
-            avg = sum(recent) / len(recent)
-            eta_h = (total - i) * avg / 3600
-            print(f"[{i:>6}/{total}] {season} {g['game_id']}  +{nb} batters +{npit} pitchers  "
-                  f"(last30 avg {avg:.2f}s, eta {eta_h:.1f}h)")
-        except Exception as e:
-            conn.execute(
-                "UPDATE games_to_scrape SET status='error', error_msg=? WHERE game_id=?",
-                (str(e)[:500], g["game_id"]),
-            )
-            conn.commit()
-            fail += 1
-            print(f"[{i:>6}/{total}] {season} {g['game_id']}  ERROR: {e}", file=sys.stderr)
-        time.sleep(delay)
-
-    print(f"\nDONE. {success:,} succeeded, {fail:,} failed, {skipped:,} skipped (dead seasons: {sorted(dead_seasons)}) "
-          f"in {(time.time()-t0)/3600:.2f}h")
 
 
 def backfill_names(conn, delay):
@@ -542,62 +201,6 @@ def backfill_names(conn, delay):
         print(f"  [{min(i + BATCH, total):>6}/{total}] resolved {updated:,}")
         time.sleep(delay)
     print(f"done. updated names for {updated:,} players.")
-
-
-def backfill_pitching(conn, start, end, delay, retry_failed=False):
-    """Fill pitcher_games for games scraped before pitching was stored."""
-    where = "status='done' AND pitch_status IS NULL"
-    if retry_failed:
-        where = "status='done' AND (pitch_status IS NULL OR pitch_status='error')"
-    if start is not None:
-        where += f" AND season >= {start}"
-    if end is not None:
-        where += f" AND season <= {end}"
-
-    games = conn.execute(
-        f"SELECT * FROM games_to_scrape WHERE {where} ORDER BY season, game_date, game_id"
-    ).fetchall()
-    if not games:
-        print("No games need pitching backfill.")
-        return
-
-    from collections import deque
-    total = len(games)
-    print(f"Backfilling pitching for {total:,} games...")
-    t0 = time.time()
-    ok = fail = empty = 0
-    recent = deque(maxlen=30)
-    for i, g in enumerate(games, 1):
-        t_start = time.time()
-        try:
-            bd = fetch_boxscore(g["game_id"])
-            _, npit = insert_game(conn, dict(g), bd)
-            conn.execute(
-                "UPDATE games_to_scrape SET pitch_status='done', pitch_error=NULL, "
-                "pitch_scraped_at=? WHERE game_id=?",
-                (dt.datetime.utcnow().isoformat(), g["game_id"]),
-            )
-            conn.commit()
-            ok += 1
-            if npit == 0:
-                empty += 1
-            recent.append(time.time() - t_start + delay)
-            avg = sum(recent) / len(recent)
-            eta_h = (total - i) * avg / 3600
-            print(f"[{i:>6}/{total}] {g['season']} {g['game_id']}  +{npit} pitchers  "
-                  f"(last30 avg {avg:.2f}s, eta {eta_h:.1f}h)")
-        except Exception as e:
-            conn.execute(
-                "UPDATE games_to_scrape SET pitch_status='error', pitch_error=? WHERE game_id=?",
-                (str(e)[:500], g["game_id"]),
-            )
-            conn.commit()
-            fail += 1
-            print(f"[{i:>6}/{total}] {g['season']} {g['game_id']}  ERROR: {e}", file=sys.stderr)
-        time.sleep(delay)
-
-    print(f"\nDONE pitching backfill. {ok:,} ok ({empty:,} had no pitchers), "
-          f"{fail:,} failed in {(time.time()-t0)/3600:.2f}h")
 
 
 def _season_positions_from_fielding(payload):
@@ -647,8 +250,8 @@ def backfill_positions(conn, delay, retry_failed=False):
     t0 = time.time()
     ok = fail = 0
     now = dt.datetime.utcnow().isoformat()
-    for bi in range(nbatches):
-        batch = players[bi * BATCH:(bi + 1) * BATCH]
+    for bi, off in enumerate(range(0, total, BATCH)):
+        batch = players[off:off + BATCH]
         t_start = time.time()
         try:
             resp = requests.get(
@@ -715,9 +318,6 @@ def show_stats(conn):
     need_pitch = conn.execute(
         "SELECT COUNT(*) FROM games_to_scrape WHERE status='done' AND pitch_status IS NULL"
     ).fetchone()[0]
-    pitch_err = conn.execute(
-        "SELECT COUNT(*) FROM games_to_scrape WHERE pitch_status='error'"
-    ).fetchone()[0]
     seas_range = conn.execute("SELECT MIN(season), MAX(season) FROM seasons_enumerated").fetchone()
     print(f"seasons enumerated: {seas}  (range {seas_range[0]}–{seas_range[1]})")
     print(f"games:              {total:,}  done={done:,}  error={err:,}  pending={pend:,}")
@@ -727,26 +327,10 @@ def show_stats(conn):
     if sp_need:
         print(f"  -> {sp_need:,} players still need positions: run `collect.py backfill-positions`")
     if need_pitch:
-        print(f"  -> {need_pitch:,} done games still need pitching: run `collect.py backfill-pitching`")
-    if pitch_err:
-        print(f"  -> {pitch_err:,} games errored on pitching backfill: retry with `backfill-pitching --retry-failed`")
+        print(f"  -> {need_pitch:,} done games still need pitching: run `collect.py season-batch`")
 
 
 # ---------------- season-batch ----------------
-SB_GAME_TYPES = "R,D,L,W,F"
-SB_HIT_FIELDS = [
-    ("ab", "atBats"), ("r", "runs"), ("h", "hits"), ("doubles", "doubles"),
-    ("triples", "triples"), ("hr", "homeRuns"), ("rbi", "rbi"),
-    ("bb", "baseOnBalls"), ("k", "strikeOuts"), ("sb", "stolenBases"),
-]
-SB_PIT_FIELDS = [
-    ("k", "strikeOuts"), ("bb", "baseOnBalls"), ("h", "hits"), ("er", "earnedRuns"),
-    ("r", "runs"), ("hr", "homeRuns"), ("p", "numberOfPitches"), ("s", "strikes"),
-    ("wp", "wildPitches"), ("bk", "balks"), ("sv", "saves"), ("bs", "blownSaves"),
-    ("sho", "shutouts"), ("cg", "completeGames"),
-]
-
-
 def sb_team_map():
     r = requests.get("https://statsapi.mlb.com/api/v1/teams",
                      params={"sportId": 1}, timeout=30)
@@ -773,7 +357,6 @@ def sb_meta(split, teams):
 
 
 def season_batch(conn, season, delay):
-    pe_ensure_schema(conn)
     teams = sb_team_map()
     pids = sb_player_ids(season)
     print(f"{len(teams)} teams, {len(pids):,} {season} players; pulling gameLogs "
@@ -850,40 +433,21 @@ def season_batch(conn, season, delay):
           f"rows, {len(games):,} games in {(time.time()-t0)/60:.1f}m")
 
 
-# ---------------- game-positions ----------------
-def _innings_to_outs(ip):
-    if ip in (None, "", "-"):
-        return 0
-    s = str(ip)
-    try:
-        if "." in s:
-            whole, frac = s.split(".", 1)
-            return int(whole or 0) * 3 + int(frac[0])
-        return int(s) * 3
-    except (ValueError, IndexError):
-        return 0
+# ---------------- bulk gameLog backfills ----------------
+GB_FIELDS = [
+    ("pa", "plateAppearances"), ("hbp", "hitByPitch"), ("ibb", "intentionalWalks"),
+    ("sf", "sacFlies"), ("sh", "sacBunts"), ("gidp", "groundIntoDoublePlay"),
+    ("cs", "caughtStealing"), ("lob", "leftOnBase"),
+]
 
 
-def gp_ensure_tables(conn):
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS game_position (
-               game_id INTEGER NOT NULL, player_id INTEGER NOT NULL,
-               season INTEGER, game_date TEXT, position TEXT,
-               PRIMARY KEY (game_id, player_id))""")
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS game_positions_done (
-               player_id INTEGER NOT NULL, season INTEGER NOT NULL,
-               status TEXT, error_msg TEXT, fetched_at TEXT,
-               PRIMARY KEY (player_id, season))""")
-    conn.commit()
-
-
-def gp_from_gamelog(person, valid_games):
-    """{game_id: (date, position)} keeping max-innings position."""
+def gp_rows_from_gamelog(person, season, valid_games):
+    """(game_id, player_id, season, date, position) keeping max-innings position."""
+    pid = person.get("id")
     try:
         splits = person["stats"][0]["splits"]
     except (KeyError, IndexError, TypeError):
-        return {}
+        return []
     best = {}
     for s in splits:
         gid = (s.get("game") or {}).get("gamePk")
@@ -893,95 +457,11 @@ def gp_from_gamelog(person, valid_games):
         abbr = (st.get("position") or {}).get("abbreviation")
         if not abbr:
             continue
-        outs = _innings_to_outs(st.get("innings"))
+        outs = ip_to_outs(st.get("innings")) or 0
         started = _to_int(st.get("gamesStarted")) or 0
         if gid not in best or (outs, started) > best[gid][:2]:
             best[gid] = (outs, started, s.get("date"), abbr)
-    return {gid: (d, a) for gid, (_, _, d, a) in best.items()}
-
-
-def game_positions(conn, start, end, delay, retry_failed=False):
-    gp_ensure_tables(conn)
-    seasons = [r[0] for r in conn.execute(
-        "SELECT DISTINCT season FROM player_games WHERE season IS NOT NULL "
-        "AND season BETWEEN ? AND ? ORDER BY season", (start, end))]
-    if not seasons:
-        print(f"No seasons in range {start}-{end}.")
-        return
-    valid_games = {r[0] for r in conn.execute(
-        "SELECT game_id FROM games_to_scrape WHERE status='done'")}
-    print(f"Loaded {len(valid_games):,} scraped game ids; {len(seasons)} seasons "
-          f"({seasons[0]}-{seasons[-1]})...")
-    done_filter = "(gpd.player_id IS NULL OR gpd.status='error')" if retry_failed else "gpd.player_id IS NULL"
-    now = dt.datetime.utcnow().isoformat()
-    t0 = time.time()
-    grand_ok = grand_rows = 0
-    for season in seasons:
-        players = [r[0] for r in conn.execute(
-            f"""SELECT DISTINCT pg.player_id FROM player_games pg
-                LEFT JOIN game_positions_done gpd ON gpd.player_id=pg.player_id AND gpd.season=pg.season
-                WHERE pg.season=? AND pg.player_id IS NOT NULL AND {done_filter}
-                ORDER BY pg.player_id""", (season,))]
-        if not players:
-            continue
-        nb = (len(players) + BULK_BATCH - 1) // BULK_BATCH
-        s_rows = 0
-        for bi in range(nb):
-            batch = players[bi*BULK_BATCH:(bi+1)*BULK_BATCH]
-            try:
-                resp = requests.get(
-                    "https://statsapi.mlb.com/api/v1/people",
-                    params={"personIds": ",".join(map(str, batch)),
-                            "hydrate": f"stats(group=[fielding],type=[gameLog],season={season},gameType=[R,D,L,W,F])"},
-                    timeout=60)
-                resp.raise_for_status()
-                rows = []
-                for person in resp.json().get("people", []):
-                    pid = person.get("id")
-                    if pid is None:
-                        continue
-                    for gid, (gdate, abbr) in gp_from_gamelog(person, valid_games).items():
-                        rows.append((gid, pid, season, gdate, abbr))
-                conn.executemany(
-                    "INSERT OR REPLACE INTO game_position (game_id, player_id, season, game_date, position) VALUES (?,?,?,?,?)", rows)
-                conn.executemany(
-                    "INSERT OR REPLACE INTO game_positions_done (player_id, season, status, error_msg, fetched_at) VALUES (?,?,'done',NULL,?)",
-                    [(p, season, now) for p in batch])
-                conn.commit()
-                s_rows += len(rows); grand_ok += len(batch); grand_rows += len(rows)
-            except Exception as e:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO game_positions_done (player_id, season, status, error_msg, fetched_at) VALUES (?,?,'error',?,?)",
-                    [(p, season, str(e)[:500], now) for p in batch])
-                conn.commit()
-                print(f"  [{season} batch {bi+1}/{nb}] ERROR: {e}", file=sys.stderr)
-            time.sleep(delay)
-        print(f"[{season}] +{s_rows:,} game-position rows  (total {grand_ok:,} players, {(time.time()-t0)/60:.1f}m)")
-    print(f"\nDONE positions. {grand_ok:,} player-seasons, {grand_rows:,} rows in {(time.time()-t0)/3600:.2f}h")
-
-
-# ---------------- game-batting ----------------
-GB_FIELDS = [
-    ("pa", "plateAppearances"), ("hbp", "hitByPitch"), ("ibb", "intentionalWalks"),
-    ("sf", "sacFlies"), ("sh", "sacBunts"), ("gidp", "groundIntoDoublePlay"),
-    ("cs", "caughtStealing"), ("lob", "leftOnBase"),
-]
-
-
-def gb_ensure_tables(conn):
-    cols = ",\n               ".join(f"{c} INTEGER" for c, _ in GB_FIELDS)
-    conn.execute(
-        f"""CREATE TABLE IF NOT EXISTS game_batting (
-               game_id INTEGER NOT NULL, player_id INTEGER NOT NULL,
-               season INTEGER, game_date TEXT,
-               {cols},
-               PRIMARY KEY (game_id, player_id))""")
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS game_batting_done (
-               player_id INTEGER NOT NULL, season INTEGER NOT NULL,
-               status TEXT, error_msg TEXT, fetched_at TEXT,
-               PRIMARY KEY (player_id, season))""")
-    conn.commit()
+    return [(gid, pid, season, d, a) for gid, (_, _, d, a) in best.items()]
 
 
 def gb_rows_from_gamelog(person, season, valid_games):
@@ -1001,81 +481,7 @@ def gb_rows_from_gamelog(person, season, valid_games):
     return list(by_game.values())
 
 
-def game_batting(conn, start, end, delay, retry_failed=False):
-    gb_ensure_tables(conn)
-    seasons = [r[0] for r in conn.execute(
-        "SELECT DISTINCT season FROM player_games WHERE season IS NOT NULL "
-        "AND season BETWEEN ? AND ? ORDER BY season", (start, end))]
-    if not seasons:
-        print(f"No seasons in range {start}-{end}.")
-        return
-    valid_games = {r[0] for r in conn.execute(
-        "SELECT game_id FROM games_to_scrape WHERE status='done'")}
-    print(f"Loaded {len(valid_games):,} scraped game ids; {len(seasons)} seasons "
-          f"({seasons[0]}-{seasons[-1]})...")
-    done_filter = "(gbd.player_id IS NULL OR gbd.status='error')" if retry_failed else "gbd.player_id IS NULL"
-    placeholders = "?,?,?,?," + ",".join("?" for _ in GB_FIELDS)
-    colnames = "game_id, player_id, season, game_date, " + ", ".join(c for c, _ in GB_FIELDS)
-    now = dt.datetime.utcnow().isoformat()
-    t0 = time.time()
-    grand_ok = grand_rows = 0
-    for season in seasons:
-        players = [r[0] for r in conn.execute(
-            f"""SELECT DISTINCT pg.player_id FROM player_games pg
-                LEFT JOIN game_batting_done gbd ON gbd.player_id=pg.player_id AND gbd.season=pg.season
-                WHERE pg.season=? AND pg.player_id IS NOT NULL AND {done_filter}
-                ORDER BY pg.player_id""", (season,))]
-        if not players:
-            continue
-        nb = (len(players) + BULK_BATCH - 1) // BULK_BATCH
-        s_rows = 0
-        for bi in range(nb):
-            batch = players[bi*BULK_BATCH:(bi+1)*BULK_BATCH]
-            try:
-                resp = requests.get(
-                    "https://statsapi.mlb.com/api/v1/people",
-                    params={"personIds": ",".join(map(str, batch)),
-                            "hydrate": f"stats(group=[hitting],type=[gameLog],season={season},gameType=[R,D,L,W,F])"},
-                    timeout=60)
-                resp.raise_for_status()
-                rows = []
-                for person in resp.json().get("people", []):
-                    if person.get("id") is None:
-                        continue
-                    rows.extend(gb_rows_from_gamelog(person, season, valid_games))
-                conn.executemany(
-                    f"INSERT OR REPLACE INTO game_batting ({colnames}) VALUES ({placeholders})", rows)
-                conn.executemany(
-                    "INSERT OR REPLACE INTO game_batting_done (player_id, season, status, error_msg, fetched_at) VALUES (?,?,'done',NULL,?)",
-                    [(p, season, now) for p in batch])
-                conn.commit()
-                s_rows += len(rows); grand_ok += len(batch); grand_rows += len(rows)
-            except Exception as e:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO game_batting_done (player_id, season, status, error_msg, fetched_at) VALUES (?,?,'error',?,?)",
-                    [(p, season, str(e)[:500], now) for p in batch])
-                conn.commit()
-                print(f"  [{season} batch {bi+1}/{nb}] ERROR: {e}", file=sys.stderr)
-            time.sleep(delay)
-        print(f"[{season}] +{s_rows:,} rows  (total {grand_ok:,} players, {(time.time()-t0)/60:.1f}m)")
-    print(f"\nDONE. {grand_ok:,} player-seasons, {grand_rows:,} game-batting rows in {(time.time()-t0)/3600:.2f}h")
-
-
-# ---------------- pitcher-extras ----------------
-def pe_ensure_schema(conn):
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(pitcher_games)")}
-    for c in ("wp", "bk", "won", "sv", "bs", "sho", "cg"):
-        if c not in cols:
-            conn.execute(f"ALTER TABLE pitcher_games ADD COLUMN {c} INTEGER")
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS pitcher_extras_done (
-               player_id INTEGER NOT NULL, season INTEGER NOT NULL,
-               status TEXT, error_msg TEXT, fetched_at TEXT,
-               PRIMARY KEY (player_id, season))""")
-    conn.commit()
-
-
-def pe_rows_from_gamelog(person, valid_games):
+def pe_rows_from_gamelog(person, season, valid_games):
     pid = person.get("id")
     try:
         splits = person["stats"][0]["splits"]
@@ -1097,62 +503,78 @@ def pe_rows_from_gamelog(person, valid_games):
     return list(by_game.values())
 
 
-def pitcher_extras(conn, start, end, delay, retry_failed=False):
-    pe_ensure_schema(conn)
+GB_COLS = "game_id, player_id, season, game_date, " + ", ".join(c for c, _ in GB_FIELDS)
+
+BULK_JOBS = {
+    "game-positions": ("fielding", "player_games", "game_positions_done", gp_rows_from_gamelog,
+                       "INSERT OR REPLACE INTO game_position "
+                       "(game_id, player_id, season, game_date, position) VALUES (?,?,?,?,?)",
+                       "game-position"),
+    "game-batting": ("hitting", "player_games", "game_batting_done", gb_rows_from_gamelog,
+                     f"INSERT OR REPLACE INTO game_batting ({GB_COLS}) "
+                     f"VALUES ({','.join('?' * (4 + len(GB_FIELDS)))})",
+                     "game-batting"),
+    "pitcher-extras": ("pitching", "pitcher_games", "pitcher_extras_done", pe_rows_from_gamelog,
+                       "UPDATE pitcher_games SET wp=?, bk=?, won=?, sv=?, bs=?, sho=?, cg=? "
+                       "WHERE game_id=? AND player_id=?",
+                       "pitcher-extras"),
+}
+
+
+def bulk_gamelog(conn, job, start, end, delay, retry_failed=False):
+    group, src, done_table, extract, write_sql, label = BULK_JOBS[job]
     seasons = [r[0] for r in conn.execute(
-        "SELECT DISTINCT season FROM pitcher_games WHERE season IS NOT NULL "
+        f"SELECT DISTINCT season FROM {src} WHERE season IS NOT NULL "
         "AND season BETWEEN ? AND ? ORDER BY season", (start, end))]
     if not seasons:
-        print(f"No pitcher seasons in range {start}-{end}.")
+        print(f"No seasons in range {start}-{end}.")
         return
     valid_games = {r[0] for r in conn.execute(
         "SELECT game_id FROM games_to_scrape WHERE status='done'")}
     print(f"Loaded {len(valid_games):,} scraped game ids; {len(seasons)} seasons "
           f"({seasons[0]}-{seasons[-1]})...")
-    done_filter = "(ped.player_id IS NULL OR ped.status='error')" if retry_failed else "ped.player_id IS NULL"
+    done_filter = "(d.player_id IS NULL OR d.status='error')" if retry_failed else "d.player_id IS NULL"
+    mark_done = (f"INSERT OR REPLACE INTO {done_table} "
+                 "(player_id, season, status, error_msg, fetched_at) VALUES (?,?,?,?,?)")
     now = dt.datetime.utcnow().isoformat()
     t0 = time.time()
     grand_ok = grand_rows = 0
     for season in seasons:
         players = [r[0] for r in conn.execute(
-            f"""SELECT DISTINCT pg.player_id FROM pitcher_games pg
-                LEFT JOIN pitcher_extras_done ped ON ped.player_id=pg.player_id AND ped.season=pg.season
+            f"""SELECT DISTINCT pg.player_id FROM {src} pg
+                LEFT JOIN {done_table} d ON d.player_id=pg.player_id AND d.season=pg.season
                 WHERE pg.season=? AND pg.player_id IS NOT NULL AND {done_filter}
                 ORDER BY pg.player_id""", (season,))]
         if not players:
             continue
         nb = (len(players) + BULK_BATCH - 1) // BULK_BATCH
         s_rows = 0
-        for bi in range(nb):
-            batch = players[bi*BULK_BATCH:(bi+1)*BULK_BATCH]
+        for bi, off in enumerate(range(0, len(players), BULK_BATCH)):
+            batch = players[off:off + BULK_BATCH]
             try:
                 resp = requests.get(
                     "https://statsapi.mlb.com/api/v1/people",
                     params={"personIds": ",".join(map(str, batch)),
-                            "hydrate": f"stats(group=[pitching],type=[gameLog],season={season},gameType=[R,D,L,W,F])"},
+                            "hydrate": f"stats(group=[{group}],type=[gameLog],"
+                                       f"season={season},gameType=[{SB_GAME_TYPES}])"},
                     timeout=60)
                 resp.raise_for_status()
                 rows = []
                 for person in resp.json().get("people", []):
                     if person.get("id") is None:
                         continue
-                    rows.extend(pe_rows_from_gamelog(person, valid_games))
-                conn.executemany(
-                    "UPDATE pitcher_games SET wp=?, bk=?, won=?, sv=?, bs=?, sho=?, cg=? WHERE game_id=? AND player_id=?", rows)
-                conn.executemany(
-                    "INSERT OR REPLACE INTO pitcher_extras_done (player_id, season, status, error_msg, fetched_at) VALUES (?,?,'done',NULL,?)",
-                    [(p, season, now) for p in batch])
+                    rows.extend(extract(person, season, valid_games))
+                conn.executemany(write_sql, rows)
+                conn.executemany(mark_done, [(p, season, 'done', None, now) for p in batch])
                 conn.commit()
                 s_rows += len(rows); grand_ok += len(batch); grand_rows += len(rows)
             except Exception as e:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO pitcher_extras_done (player_id, season, status, error_msg, fetched_at) VALUES (?,?,'error',?,?)",
-                    [(p, season, str(e)[:500], now) for p in batch])
+                conn.executemany(mark_done, [(p, season, 'error', str(e)[:500], now) for p in batch])
                 conn.commit()
                 print(f"  [{season} batch {bi+1}/{nb}] ERROR: {e}", file=sys.stderr)
             time.sleep(delay)
-        print(f"[{season}] {s_rows:,} rows updated  (total {grand_ok:,} pitchers, {(time.time()-t0)/60:.1f}m)")
-    print(f"\nDONE. {grand_ok:,} pitcher-seasons, {grand_rows:,} rows in {(time.time()-t0)/3600:.2f}h")
+        print(f"[{season}] +{s_rows:,} {label} rows  (total {grand_ok:,} players, {(time.time()-t0)/60:.1f}m)")
+    print(f"\nDONE. {grand_ok:,} player-seasons, {grand_rows:,} {label} rows in {(time.time()-t0)/3600:.2f}h")
 
 
 # ---------------- build ----------------
@@ -1376,47 +798,9 @@ def build_cubes(conn, positions, mode, no_rebuild):
     print(f"\nDONE in {(time.time()-t0)/60:.1f}m -> {OUT_ROOT}")
 
 
-def serve(port):
-    import http.server, socketserver, os
-    os.chdir(OUT_ROOT.parent)
-
-    class H(http.server.SimpleHTTPRequestHandler):
-        def end_headers(self):
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-            super().end_headers()
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", port), H) as httpd:
-        print(f"no-cache server on http://127.0.0.1:{port}/")
-        httpd.serve_forever()
-
-
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd")
-
-    e = sub.add_parser("enumerate", help="Pull game IDs from schedule()")
-    e.add_argument("--start", type=int, default=2024)
-    e.add_argument("--end", type=int, default=2024)
-    e.add_argument("--delay", type=float, default=DEFAULT_DELAY)
-
-    s = sub.add_parser("scrape", help="Pull each pending boxscore")
-    s.add_argument("--start", type=int)
-    s.add_argument("--end", type=int)
-    s.add_argument("--retry-failed", action="store_true")
-    s.add_argument("--delay", type=float, default=DEFAULT_DELAY)
-
-    a = sub.add_parser("all", help="enumerate + scrape in one go")
-    a.add_argument("--start", type=int, default=2024)
-    a.add_argument("--end", type=int, default=2024)
-    a.add_argument("--delay", type=float, default=DEFAULT_DELAY)
-
-    bp = sub.add_parser("backfill-pitching",
-                        help="Fill pitcher_games for already-scraped games")
-    bp.add_argument("--start", type=int)
-    bp.add_argument("--end", type=int)
-    bp.add_argument("--retry-failed", action="store_true",
-                    help="also re-attempt games whose last backfill errored")
-    bp.add_argument("--delay", type=float, default=DEFAULT_DELAY)
 
     bn = sub.add_parser("backfill-names",
                         help="Replace boxscore short names with full names")
@@ -1450,9 +834,6 @@ def main():
     bc.add_argument("--no-rebuild", action="store_true",
                     help="reuse existing unified tables (just re-emit dumps)")
 
-    sv = sub.add_parser("serve", help="No-cache static dev server on public/")
-    sv.add_argument("--port", type=int, default=8777)
-
     sub.add_parser("stats", help="show progress")
 
     args = ap.parse_args()
@@ -1460,40 +841,20 @@ def main():
         ap.print_help()
         return
 
-    if args.cmd == "serve":
-        serve(args.port)
-        return
-
     conn = open_db()
     init_db(conn)
-    migrate_db(conn)
 
     if args.cmd == "stats":
         show_stats(conn)
         return
-    if args.cmd == "enumerate":
-        for y in range(args.start, args.end + 1):
-            enumerate_season(conn, y, args.delay)
-    elif args.cmd == "scrape":
-        scrape_games(conn, args.start, args.end, args.retry_failed, args.delay)
-    elif args.cmd == "all":
-        for y in range(args.start, args.end + 1):
-            enumerate_season(conn, y, args.delay)
-        scrape_games(conn, args.start, args.end, False, args.delay)
-    elif args.cmd == "backfill-pitching":
-        backfill_pitching(conn, args.start, args.end, args.delay, args.retry_failed)
-    elif args.cmd == "backfill-names":
+    if args.cmd == "backfill-names":
         backfill_names(conn, args.delay)
     elif args.cmd == "backfill-positions":
         backfill_positions(conn, args.delay, args.retry_failed)
     elif args.cmd == "season-batch":
         season_batch(conn, args.season, args.delay)
-    elif args.cmd == "game-positions":
-        game_positions(conn, args.start, args.end, args.delay, args.retry_failed)
-    elif args.cmd == "game-batting":
-        game_batting(conn, args.start, args.end, args.delay, args.retry_failed)
-    elif args.cmd == "pitcher-extras":
-        pitcher_extras(conn, args.start, args.end, args.delay, args.retry_failed)
+    elif args.cmd in BULK_JOBS:
+        bulk_gamelog(conn, args.cmd, args.start, args.end, args.delay, args.retry_failed)
     elif args.cmd == "build":
         positions = [p.strip() for p in args.positions.split(",") if p.strip()]
         build_cubes(conn, positions, args.mode, args.no_rebuild)

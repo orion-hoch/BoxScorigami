@@ -52,10 +52,6 @@
   #coarseToggle button.active { background: #2a2f36; color: #f7c948; border-color: #f7c948; }
   #coarseToggle .mlb-only { display: none; }
   body.sport-mlb #coarseToggle .mlb-only { display: block; }
-  #controls select {
-    background: #181b21; color: #e6e8eb; border: 2px solid #3a4150; border-radius: 4px;
-    padding: 3px 6px; font-size: 12px; width: 100%;
-  }
   #axisGrid {
     display: grid; grid-template-columns: 24px 1fr; gap: 5px 8px; align-items: center;
     margin-top: 6px; padding: 6px 9px;
@@ -372,14 +368,7 @@ const CORNER_SIGNS = [
   [0,0,0],[1,0,0],[0,1,0],[1,1,0],[0,0,1],[1,0,1],[0,1,1],[1,1,1],
 ];
 
-function bucketColor(n) {
-  if (n === 1) return COLOR_ONE;
-  return COLOR_MANY;
-}
-
-function patchMaterial(material, extraMul = 1.0, alwaysTransparent = false) {
-  material.transparent = alwaysTransparent;
-  material.depthWrite = !alwaysTransparent;
+function patchMaterial(material) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uGlobalOpacity = SHARED.uGlobalOpacity;
     shader.uniforms.uClipMin  = SHARED.uClipMin;
@@ -431,7 +420,7 @@ function patchMaterial(material, extraMul = 1.0, alwaysTransparent = false) {
         .replace(
           '#include <opaque_fragment>',
           `#include <opaque_fragment>
-           gl_FragColor.a *= clamp(uGlobalOpacity * ${extraMul.toFixed(4)}, 0.0, 1.0);`
+           gl_FragColor.a *= clamp(uGlobalOpacity, 0.0, 1.0);`
         );
   };
 }
@@ -589,7 +578,6 @@ function coarsenData(data, k) {
   return {
     axes: { x: scaleAxis(data.axes.x), y: scaleAxis(data.axes.y), z: scaleAxis(data.axes.z) },
     cells,
-    leaderboard: data.leaderboard,
   };
 }
 
@@ -623,7 +611,7 @@ function buildCube(data, preserveView) {
 
   const geomOcc = new THREE.BoxGeometry(0.9, 0.9, 0.9);
   const matOcc = new THREE.MeshLambertMaterial();
-  patchMaterial(matOcc, 1.0, false);
+  patchMaterial(matOcc);
 
   const occMesh = new THREE.InstancedMesh(geomOcc, matOcc, Math.max(1, cells.length));
   occMesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
@@ -635,7 +623,7 @@ function buildCube(data, preserveView) {
     dummy.position.set(c.p - base.x, c.r - base.y, c.a - base.z);
     dummy.updateMatrix();
     occMesh.setMatrixAt(i, dummy.matrix);
-    occMesh.setColorAt(i, bucketColor(c.n));
+    occMesh.setColorAt(i, c.n === 1 ? COLOR_ONE : COLOR_MANY);
     instanceIndex.push(c);
   }
   occMesh.count = cells.length;
@@ -740,7 +728,7 @@ function buildEnclosedMesh() {
 
   const geom = new THREE.BoxGeometry(0.9, 0.9, 0.9);
   const mat = new THREE.MeshLambertMaterial({ color: COLOR_ENCLOSED });
-  patchMaterial(mat, 1.0, false);
+  patchMaterial(mat);
 
   const mesh = new THREE.InstancedMesh(geom, mat, positions.length);
   const dummy = new THREE.Object3D();
@@ -1306,26 +1294,10 @@ document.getElementById('showLabels').addEventListener('change', (e) => {
 });
 
 const SPORTS = {
-  nba: {
-    label: 'NBA',
-    title: 'BoxScorigami',
-    defaults: ['pts', 'reb', 'ast'],
-  },
-  nfl: {
-    label: 'NFL',
-    title: 'BoxScorigami',
-    defaults: ['rec_yds', 'rec', 'rec_td'],
-  },
-  mlb: {
-    label: 'MLB',
-    title: 'BoxScorigami',
-    defaults: ['sb', 'rbi', 'hr'],
-  },
-  wnba: {
-    label: 'WNBA',
-    title: 'BoxScorigami',
-    defaults: ['pts', 'reb', 'ast'],
-  },
+  nba:  { label: 'NBA',  defaults: ['pts', 'reb', 'ast'] },
+  nfl:  { label: 'NFL',  defaults: ['rec_yds', 'rec', 'rec_td'] },
+  mlb:  { label: 'MLB',  defaults: ['sb', 'rbi', 'hr'] },
+  wnba: { label: 'WNBA', defaults: ['pts', 'reb', 'ast'] },
 };
 
 const NBA_TO_BBR_TEAM = { BKN: 'BRK', CHA: 'CHO', PHX: 'PHO' };
@@ -1378,25 +1350,16 @@ function playerHtml(cell, suffix) {
 function boxscoreUrl(cell) {
   if (!cell || !cell.d) return null;
   const ymd = cell.d.replaceAll('-', '');
-  if (SPORT === 'nba') {
+  if (SPORT === 'nba' || SPORT === 'wnba') {
     if (!cell.m) return null;
     let home;
     if (cell.m.includes(' @ ')) home = cell.m.split(' @ ')[1].trim();
     else if (cell.m.includes(' vs. ') || cell.m.includes(' vs ')) {
       home = cell.m.split(/ vs\.? /)[0].trim();
     } else return null;
-    home = NBA_TO_BBR_TEAM[home] || home;
-    return `https://www.basketball-reference.com/boxscores/${ymd}0${home}.html`;
-  }
-  if (SPORT === 'wnba') {
-    if (!cell.m) return null;
-    let home;
-    if (cell.m.includes(' @ ')) home = cell.m.split(' @ ')[1].trim();
-    else if (cell.m.includes(' vs. ') || cell.m.includes(' vs ')) {
-      home = cell.m.split(/ vs\.? /)[0].trim();
-    } else return null;
-    home = WNBA_TO_BBR_TEAM[home] || home;
-    return `https://www.basketball-reference.com/wnba/boxscores/${ymd}0${home}.html`;
+    const wnba = SPORT === 'wnba';
+    home = (wnba ? WNBA_TO_BBR_TEAM : NBA_TO_BBR_TEAM)[home] || home;
+    return `https://www.basketball-reference.com/${wnba ? 'wnba/' : ''}boxscores/${ymd}0${home}.html`;
   }
   if (SPORT === 'nfl') {
     if (!cell.g) return null;
@@ -1417,7 +1380,7 @@ function boxscoreUrl(cell) {
 let SPORT = 'nba';
 let MODE = 'game';
 let MIN_GAMES = true;
-const MIN_GAMES_MIN = { nba: 20, nfl: 6, wnba: 15 };
+const HAS_MIN_GAMES = new Set(['nba', 'nfl', 'wnba']);
 const STATS_META = {};
 
 let POSITION = 'all';
@@ -1480,15 +1443,7 @@ function rollupCube(dump, x, y, z, wlFilter) {
   const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
   const my = out.reduce((m, c) => Math.max(m, c.r), 0);
   const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
-  const uniq = new Map(), names = new Map();
-  for (const cell of out) if (cell.n === 1) {
-    uniq.set(cell.pid, (uniq.get(cell.pid) || 0) + 1); names.set(cell.pid, cell.pl);
-  }
-  const leaderboard = [...uniq.entries()]
-    .map(([pid, n]) => ({ player_id: pid, name: names.get(pid), n }))
-    .sort((a, b) => b.n - a.n || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
-    .slice(0, 50);
-  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out, leaderboard };
+  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out };
 }
 
 async function getDump() {
@@ -1532,13 +1487,12 @@ async function loadTally(x, y, z) {
     return {
       axes: { x: mkAxis(x, r.axes.x.max), y: mkAxis(y, r.axes.y.max), z: mkAxis(z, r.axes.z.max) },
       cells: r.cells,
-      leaderboard: r.leaderboard,
     };
   }
   const fileKeys = [x, y, z].slice().sort();
   let dir;
   if (MODE === 'season') {
-    dir = (MIN_GAMES && MIN_GAMES_MIN[SPORT] != null) ? 'tally-season-min' : 'tally-season';
+    dir = (MIN_GAMES && HAS_MIN_GAMES.has(SPORT)) ? 'tally-season-min' : 'tally-season';
   } else {
     dir = 'tally';
   }
@@ -1576,7 +1530,7 @@ async function loadTally(x, y, z) {
     };
   });
 
-  return { axes, cells, leaderboard: data.leaderboard };
+  return { axes, cells };
 }
 
 let lastAxes = [];
@@ -1590,12 +1544,8 @@ function fillDropdowns(stats, defaults) {
   lastAxes = defaults.slice();
 }
 
-function currentAxes() {
-  return [axisXEl.value, axisYEl.value, axisZEl.value];
-}
-
 async function refresh() {
-  const [x, y, z] = currentAxes();
+  const [x, y, z] = [axisXEl.value, axisYEl.value, axisZEl.value];
   const set = new Set([x, y, z]);
   if (set.size !== 3) {
     statusEl.textContent = 'pick three distinct stats';
@@ -1641,8 +1591,6 @@ async function loadSport(sport) {
   document.querySelectorAll('#tabs button').forEach(b => {
     b.classList.toggle('active', b.dataset.sport === sport);
   });
-  document.getElementById('cubeTitle').textContent = SPORTS[sport].title;
-  document.title = 'BoxScorigami';
   location.hash = `sport=${sport}`;
   document.body.classList.toggle('sport-mlb', sport === 'mlb');
   MODE = 'game';
@@ -1734,7 +1682,7 @@ async function setPosition(pos) {
 
 function updateMinGamesToggle() {
   const btn = document.getElementById('injuredToggle');
-  const show = MODE === 'season' && MIN_GAMES_MIN[SPORT] != null;
+  const show = MODE === 'season' && HAS_MIN_GAMES.has(SPORT);
   btn.style.display = show ? 'block' : 'none';
   btn.classList.toggle('active', MIN_GAMES);
   btn.textContent = `Min Games: ${MIN_GAMES ? 'on' : 'off'}`;

@@ -1,4 +1,4 @@
-"""Fetch NBA player-game box scores into nba.sqlite."""
+"""Fetch NBA/WNBA player-game box scores into <league>.sqlite."""
 import argparse
 import sqlite3
 import time
@@ -7,21 +7,44 @@ from pathlib import Path
 from nba_api.stats.endpoints import leaguegamelog
 from nba_api.stats.library.parameters import PlayerOrTeamAbbreviation, SeasonTypePlayoffs
 
-DB_PATH = Path(__file__).resolve().parent / "nba.sqlite"
+HERE = Path(__file__).resolve().parent
 REQUEST_PAUSE_SEC = 0.7
 RETRY_MAX = 4
 SEASON_TYPES = [SeasonTypePlayoffs.regular, SeasonTypePlayoffs.playoffs]
 
-
-def season_str(start_year: int) -> str:
-    return f"{start_year}-{str(start_year + 1)[-2:]}"
-
+LEAGUES = {
+    "nba": {
+        "db": HERE / "nba.sqlite",
+        "league_id": "00",
+        "season_str": lambda y: f"{y}-{str(y + 1)[-2:]}",
+        "start": 1950,
+        "end": 2025,
+    },
+    "wnba": {
+        "db": HERE.parent / "wnba" / "wnba.sqlite",
+        "league_id": "10",
+        "season_str": str,
+        "start": 1997,
+        "end": 2026,
+    },
+}
 
 STAT_COLUMNS = [
     "pts", "reb", "ast",
     "stl", "blk", "tov", "pf",
     "fgm", "fga", "fg3m", "fg3a", "ftm", "fta",
 ]
+
+COLS = [
+    ("game_id", "GAME_ID"),
+    ("game_date", "GAME_DATE"),
+    ("player_id", "PLAYER_ID"),
+    ("player_name", "PLAYER_NAME"),
+    ("team_id", "TEAM_ID"),
+    ("team_abbr", "TEAM_ABBREVIATION"),
+    ("matchup", "MATCHUP"),
+    ("min", "MIN"),
+] + [(c, c.upper()) for c in STAT_COLUMNS]
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -66,20 +89,17 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(player_games)")}
-    for col in STAT_COLUMNS:
-        if col not in existing:
-            conn.execute(f"ALTER TABLE player_games ADD COLUMN {col} INTEGER")
     conn.commit()
 
 
-def fetch_season(season: str, season_type: str):
+def fetch_season(season: str, season_type: str, league_id: str):
     last_err = None
     for attempt in range(RETRY_MAX):
         try:
             ep = leaguegamelog.LeagueGameLog(
                 season=season,
                 season_type_all_star=season_type,
+                league_id=league_id,
                 player_or_team_abbreviation=PlayerOrTeamAbbreviation.player,
                 timeout=60,
             )
@@ -106,40 +126,11 @@ def upsert_rows(conn: sqlite3.Connection, season: str, season_type: str, rows: l
         minutes = r.get("MIN")
         if minutes is not None and float(minutes) == 0:
             continue
-        payload.append(
-            (
-                r.get("GAME_ID"),
-                r.get("GAME_DATE"),
-                season,
-                season_type,
-                r.get("PLAYER_ID"),
-                r.get("PLAYER_NAME"),
-                r.get("TEAM_ID"),
-                r.get("TEAM_ABBREVIATION"),
-                r.get("MATCHUP"),
-                r.get("MIN"),
-                pts,
-                reb,
-                ast,
-                r.get("STL"),
-                r.get("BLK"),
-                r.get("TOV"),
-                r.get("PF"),
-                r.get("FGM"),
-                r.get("FGA"),
-                r.get("FG3M"),
-                r.get("FG3A"),
-                r.get("FTM"),
-                r.get("FTA"),
-            )
-        )
+        payload.append((season, season_type) + tuple(r.get(k) for _, k in COLS))
+    names = ["season", "season_type"] + [c for c, _ in COLS]
     conn.executemany(
-        """INSERT OR REPLACE INTO player_games
-           (game_id, game_date, season, season_type, player_id, player_name,
-            team_id, team_abbr, matchup, min, pts, reb, ast,
-            stl, blk, tov, pf, fgm, fga, fg3m, fg3a, ftm, fta)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        f"""INSERT OR REPLACE INTO player_games ({", ".join(names)})
+            VALUES ({", ".join("?" * len(names))})""",
         payload,
     )
     conn.execute(
@@ -161,20 +152,26 @@ def already_done(conn: sqlite3.Connection, season: str, season_type: str) -> boo
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--start", type=int, default=1950, help="first season start-year (default 1950 => 1950-51)")
-    ap.add_argument("--end", type=int, default=2025, help="last season start-year inclusive (default 2025 => 2025-26)")
-    ap.add_argument("--season", type=str, help="single season e.g. 2023-24 (overrides --start/--end)")
+    ap.add_argument("--league", choices=sorted(LEAGUES), default="nba")
+    ap.add_argument("--start", type=int, help="first season year")
+    ap.add_argument("--end", type=int, help="last season year inclusive")
+    ap.add_argument("--season", type=str, help="single season (overrides --start/--end)")
     ap.add_argument("--season-type", type=str, choices=SEASON_TYPES + ["both"], default="both")
     ap.add_argument("--force", action="store_true", help="re-fetch even if already in seasons_done")
     args = ap.parse_args()
 
-    conn = sqlite3.connect(DB_PATH)
+    cfg = LEAGUES[args.league]
+    db_path = cfg["db"]
+
+    conn = sqlite3.connect(db_path)
     init_db(conn)
 
     if args.season:
         seasons = [args.season]
     else:
-        seasons = [season_str(y) for y in range(args.start, args.end + 1)]
+        start = args.start if args.start is not None else cfg["start"]
+        end = args.end if args.end is not None else cfg["end"]
+        seasons = [cfg["season_str"](y) for y in range(start, end + 1)]
 
     types = SEASON_TYPES if args.season_type == "both" else [args.season_type]
 
@@ -186,14 +183,14 @@ def main():
                 continue
             print(f"-> {season} {st} ... ", end="", flush=True)
             t0 = time.time()
-            rows = fetch_season(season, st)
+            rows = fetch_season(season, st, cfg["league_id"])
             n = upsert_rows(conn, season, st, rows)
             total_rows += n
             print(f"{n} rows  ({time.time() - t0:.1f}s)")
             time.sleep(REQUEST_PAUSE_SEC)
 
     print(f"\nDone. Inserted/updated {total_rows} rows this run.")
-    print(f"DB: {DB_PATH}")
+    print(f"DB: {db_path}")
 
 
 if __name__ == "__main__":

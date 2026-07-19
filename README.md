@@ -21,20 +21,15 @@ NBA_Cube/
 │   ├── mlb/                #   "
 │   └── wnba/               #   "
 ├── nba/                    # NBA pipeline (nba_api)
-│   ├── collect.py          #   fetch player_games -> nba.sqlite
-│   ├── export_static.py    #   generate public/nba/ from the db
+│   ├── collect.py          #   fetch player_games -> nba.sqlite (--league wnba for WNBA)
 │   ├── server.py           #   local dev JSON API (optional)
 │   └── nba.sqlite          #   gitignored
 ├── nfl/                    # NFL pipeline -> nfl_full.sqlite, public/nfl/
 │   ├── collect.py          #   scrape Pro-Football-Reference -> nfl_full.sqlite
-│   ├── export_static.py    #   generate public/nfl/ from the db
 │   └── server.py           #   ATTACHes nfl_full.sqlite for the full history
 ├── mlb/                    # MLB pipeline (MLB-StatsAPI) -> mlb.sqlite, public/mlb/
-├── wnba/                   # WNBA pipeline (nba_api)
-│   ├── collect.py          #   fetch player_games -> wnba.sqlite
-│   ├── export_static.py    #   generate public/wnba/ from the db
-│   ├── server.py           #   local dev JSON API (optional)
-│   └── wnba.sqlite          #   gitignored
+├── export_static.py        # generate public/<sport>/ from the db (--sport nba|nfl|mlb)
+├── stats.py                # shared query layer + dev server used by each sport
 └── .gitignore
 ```
 
@@ -49,7 +44,7 @@ are gitignored (too big — regenerate from the collect scripts).
 python3 nba/collect.py
 
 # 2. (whenever the db changes) Generate the static combos
-python3 nba/export_static.py
+python3 export_static.py --sport nba
 
 # 3. Serve the unified site from the repo root
 python3 -m http.server --directory public 8000

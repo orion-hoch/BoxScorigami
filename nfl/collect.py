@@ -113,12 +113,7 @@ class Browser:
     @staticmethod
     def _clear_stale_locks():
         for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
-            try:
-                (USER_DATA_DIR / name).unlink()
-            except FileNotFoundError:
-                pass
-            except Exception:
-                pass
+            (USER_DATA_DIR / name).unlink(missing_ok=True)
 
     def _open_context(self):
         self._ctx = self._pw.chromium.launch_persistent_context(
@@ -139,6 +134,8 @@ class Browser:
 
     def fetch(self, url, retries=2):
         """Navigate, wait for Cloudflare to clear, return HTML."""
+        # ponytail: kept — Chromium leaks memory over a multi-hour scrape; the
+        # periodic restart is the only thing that keeps long runs from dying.
         if self._since_restart >= self._restart_every:
             self._restart()
         for attempt in range(retries + 1):
@@ -405,88 +402,6 @@ def scrape_games(conn, browser, start, end, retry_failed, delay):
     print(f"\nDONE. {success:,} succeeded, {fail:,} failed in {(time.time()-t0)/3600:.1f}h")
 
 
-def recheck_empty_games(conn, browser, delay, start=None, end=None):
-    """Re-scrape 'done' games that produced zero player rows."""
-    where = "g.status = 'done'"
-    if start is not None:
-        where += f" AND g.season >= {start}"
-    if end is not None:
-        where += f" AND g.season <= {end}"
-
-    games = conn.execute(f"""
-        SELECT g.* FROM games_to_scrape g
-        LEFT JOIN (SELECT game_id, COUNT(*) AS n FROM player_games GROUP BY game_id) p
-          ON p.game_id = g.game_id
-        WHERE {where} AND COALESCE(p.n, 0) = 0
-        ORDER BY g.season, g.game_date, g.game_id
-    """).fetchall()
-    if not games:
-        print("\nRecheck: no zero-player 'done' games to recheck.")
-        return
-
-    print(f"\nRecheck: {len(games):,} games marked done but have 0 player rows. Re-scraping...")
-    fixed = 0
-    still_empty = 0
-    for i, g in enumerate(games, 1):
-        url = f"{BASE}/boxscores/{g['game_id']}.htm"
-        try:
-            html = browser.fetch(url)
-            players = extract_player_offense(html)
-            n = insert_player_rows(conn, dict(g), players)
-            if n > 0:
-                conn.execute(
-                    "UPDATE games_to_scrape SET status='done', error_msg=NULL, scraped_at=? WHERE game_id=?",
-                    (dt.datetime.utcnow().isoformat(), g["game_id"]),
-                )
-                fixed += 1
-                print(f"[{i:>4}/{len(games)}] {g['season']} {g['game_id']}  +{n} players (FIXED)")
-            else:
-                conn.execute(
-                    "UPDATE games_to_scrape SET status='empty', error_msg='no player_offense after recheck', scraped_at=? WHERE game_id=?",
-                    (dt.datetime.utcnow().isoformat(), g["game_id"]),
-                )
-                still_empty += 1
-                print(f"[{i:>4}/{len(games)}] {g['season']} {g['game_id']}  still 0 players -> 'empty'")
-            conn.commit()
-        except Exception as e:
-            print(f"[{i:>4}/{len(games)}] {g['season']} {g['game_id']}  RECHECK ERROR: {e}", file=sys.stderr)
-        time.sleep(delay)
-
-    print(f"\nRecheck done. fixed={fixed:,}  still_empty={still_empty:,}")
-
-
-def backfill_opponent(conn):
-    games = conn.execute("""
-        SELECT game_id, GROUP_CONCAT(DISTINCT team_abbr) AS teams
-        FROM player_games
-        WHERE team_abbr IS NOT NULL
-        GROUP BY game_id
-    """).fetchall()
-    print(f"scanning {len(games):,} games...")
-    fixed = weird = 0
-    for g in games:
-        teams = [t for t in (g["teams"] or "").split(",") if t]
-        if len(teams) != 2:
-            weird += 1
-            continue
-        a, b = teams
-        conn.execute(
-            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
-            (b, f"{a} vs {b}", g["game_id"], a),
-        )
-        conn.execute(
-            "UPDATE player_games SET opponent=?, matchup=? WHERE game_id=? AND team_abbr=?",
-            (a, f"{b} vs {a}", g["game_id"], b),
-        )
-        fixed += 1
-    conn.commit()
-    remaining = conn.execute(
-        "SELECT COUNT(*) FROM player_games WHERE matchup IS NULL"
-    ).fetchone()[0]
-    print(f"fixed {fixed:,} games  ({weird:,} skipped: not exactly 2 teams; "
-          f"{remaining:,} rows still NULL)")
-
-
 def show_stats(conn):
     seas = conn.execute("SELECT COUNT(*) FROM seasons_enumerated").fetchone()[0]
     total = conn.execute("SELECT COUNT(*) FROM games_to_scrape").fetchone()[0]
@@ -515,16 +430,8 @@ def main():
     s.add_argument("--start", type=int)
     s.add_argument("--end", type=int, default=current_season())
     s.add_argument("--retry-failed", action="store_true")
-    s.add_argument("--no-recheck", action="store_true",
-                   help="skip the post-run recheck of zero-player 'done' games")
     s.add_argument("--delay", type=float, default=DEFAULT_DELAY)
 
-    r = sub.add_parser("recheck", help="Re-scrape games marked done that produced 0 player rows")
-    r.add_argument("--start", type=int)
-    r.add_argument("--end", type=int)
-    r.add_argument("--delay", type=float, default=DEFAULT_DELAY)
-
-    sub.add_parser("backfill-opponent", help="Repair opponent/matchup from team_abbr (no network)")
     sub.add_parser("stats", help="show progress")
 
     args = ap.parse_args()
@@ -534,9 +441,6 @@ def main():
     if args.cmd == "stats":
         show_stats(conn)
         return
-    if args.cmd == "backfill-opponent":
-        backfill_opponent(conn)
-        return
 
     with Browser() as browser:
         if args.cmd == "enumerate":
@@ -544,10 +448,6 @@ def main():
                               refresh=args.refresh)
         elif args.cmd == "scrape":
             scrape_games(conn, browser, args.start, args.end, args.retry_failed, args.delay)
-            if not args.no_recheck:
-                recheck_empty_games(conn, browser, args.delay, args.start, args.end)
-        elif args.cmd == "recheck":
-            recheck_empty_games(conn, browser, args.delay, args.start, args.end)
 
     show_stats(conn)
 

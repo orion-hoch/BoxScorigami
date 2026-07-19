@@ -1,9 +1,6 @@
 # Local data — SQLite DBs are too big for git; regenerate via the collect scripts.
 # Blanket rule so no sport's db (or a renamed/new one) can ever be committed.
-*.sqlite
-*.sqlite-journal
-*.sqlite-wal
-*.sqlite-shm
+*.sqlite*
 
 # Chromium profile from the PFR scrape (cached cookies, no source value)
 .browser_profile/
