@@ -8,7 +8,7 @@ import stats as shared  # noqa: E402
 
 DB_PATH = HERE / "nfl_full.sqlite"
 
-STATS = {
+OFFENSE = {
     "pass_cmp": {"col": "pass_cmp", "label": "Pass Cmp",      "color": "#ff6b6b"},
     "pass_att": {"col": "pass_att", "label": "Pass Att",      "color": "#ff8e8e"},
     "pass_yds": {"col": "pass_yds", "label": "Pass Yds",      "color": "#ff5fa0"},
@@ -24,6 +24,66 @@ STATS = {
     "rec_td":   {"col": "rec_td",   "label": "Rec TD",        "color": "#4dd0e1"},
 }
 
+# PFR credits half sacks, but the cube grid is integer-only — store half-sack
+# units so a 1.5-sack game stays a distinct statline from a 2.0-sack game.
+DEFENSE = {
+    "tackles_combined": {"col": "tackles_combined", "label": "Tackles",  "color": "#ff6b6b"},
+    "tackles_solo":     {"col": "tackles_solo",     "label": "Solo Tk",  "color": "#ff8e8e"},
+    "tackles_assists":  {"col": "tackles_assists",  "label": "Ast Tk",   "color": "#ffb3b3"},
+    "sacks":            {"col": "CAST(sacks * 2 AS INT)",
+                         "label": "Sacks (½)", "color": "#a07bff"},
+    "qb_hits":          {"col": "qb_hits",          "label": "QB Hits",  "color": "#c39bff"},
+    "tackles_loss":     {"col": "tackles_loss",     "label": "TFL",      "color": "#8ee27a"},
+    "def_int":          {"col": "def_int",          "label": "INT",      "color": "#f7c948"},
+    "pass_defended":    {"col": "pass_defended",    "label": "Pass Def", "color": "#5fd5ff"},
+    "fumbles_forced":   {"col": "fumbles_forced",   "label": "FF",       "color": "#6bd06b"},
+    "def_int_td":       {"col": "def_int_td",       "label": "INT TD",   "color": "#ff5fa0"},
+    "fumbles_rec_td":   {"col": "fumbles_rec_td",   "label": "FR TD",    "color": "#ff9f43"},
+}
+
+SPECIAL = {
+    "kick_ret":      {"col": "kick_ret",      "label": "KR",       "color": "#ff6b6b"},
+    "kick_ret_yds":  {"col": "kick_ret_yds",  "label": "KR Yds",   "color": "#ff8e8e"},
+    "kick_ret_td":   {"col": "kick_ret_td",   "label": "KR TD",    "color": "#ff5fa0"},
+    "punt_ret":      {"col": "punt_ret",      "label": "PR",       "color": "#6b9eff"},
+    "punt_ret_yds":  {"col": "punt_ret_yds",  "label": "PR Yds",   "color": "#5fd5ff"},
+    "punt_ret_td":   {"col": "punt_ret_td",   "label": "PR TD",    "color": "#4dd0e1"},
+    "fgm":           {"col": "fgm",           "label": "FG Made",  "color": "#f7c948"},
+    "fga":           {"col": "fga",           "label": "FG Att",   "color": "#ffd97a"},
+    "xpm":           {"col": "xpm",           "label": "XP Made",  "color": "#8ee27a"},
+    "punt":          {"col": "punt",          "label": "Punts",    "color": "#a07bff"},
+    "punt_yds":      {"col": "punt_yds",      "label": "Punt Yds", "color": "#c39bff"},
+}
+
+# returns and kicking are separate PFR tables; a punter rarely returns kicks, so
+# neither side may be joined away. Union the ids, then outer-join both.
+SPECIAL_TABLE = """(
+    SELECT ids.game_id, ids.player_pfr_id,
+           COALESCE(r.game_date, k.game_date)     AS game_date,
+           COALESCE(r.season, k.season)           AS season,
+           COALESCE(r.game_type, k.game_type)     AS game_type,
+           COALESCE(r.player_name, k.player_name) AS player_name,
+           COALESCE(r.team_abbr, k.team_abbr)     AS team_abbr,
+           IFNULL(r.kick_ret, 0)     AS kick_ret,
+           IFNULL(r.kick_ret_yds, 0) AS kick_ret_yds,
+           IFNULL(r.kick_ret_td, 0)  AS kick_ret_td,
+           IFNULL(r.punt_ret, 0)     AS punt_ret,
+           IFNULL(r.punt_ret_yds, 0) AS punt_ret_yds,
+           IFNULL(r.punt_ret_td, 0)  AS punt_ret_td,
+           IFNULL(k.fgm, 0)          AS fgm,
+           IFNULL(k.fga, 0)          AS fga,
+           IFNULL(k.xpm, 0)          AS xpm,
+           IFNULL(k.punt, 0)         AS punt,
+           IFNULL(k.punt_yds, 0)     AS punt_yds
+    FROM (SELECT game_id, player_pfr_id FROM returns
+          UNION
+          SELECT game_id, player_pfr_id FROM kicking) ids
+    LEFT JOIN returns r
+           ON r.game_id = ids.game_id AND r.player_pfr_id = ids.player_pfr_id
+    LEFT JOIN kicking k
+           ON k.game_id = ids.game_id AND k.player_pfr_id = ids.player_pfr_id
+)"""
+
 SANITY_BAD = [
     "pass_cmp > pass_att",
     "pass_cmp + pass_int > pass_att",
@@ -38,6 +98,36 @@ SANITY_BAD = [
                           "sacks", "rush_att", "rush_td", "rec", "tgt", "rec_td")]
 SANITY_FILTER = shared.sanity_filter(SANITY_BAD)
 
+DEF_SANITY = shared.sanity_filter([
+    "tackles_solo > tackles_combined",
+    "tackles_assists > tackles_combined",
+    "def_int_td > def_int",
+] + [f"{c} < 0" for c in DEFENSE if c != "sacks"] + ["sacks < 0"])
+
+ST_SANITY = shared.sanity_filter([
+    "kick_ret_td > kick_ret",
+    "punt_ret_td > punt_ret",
+    "fgm > fga",
+    "kick_ret = 0 AND kick_ret_yds <> 0",
+    "punt_ret = 0 AND punt_ret_yds <> 0",
+    "punt = 0 AND punt_yds <> 0",
+] + [f"{c} < 0" for c in ("kick_ret", "kick_ret_td", "punt_ret", "punt_ret_td",
+                          "fgm", "fga", "xpm", "punt")])
+
+GROUPS = {
+    "off": {"label": "Offense", "stats": OFFENSE, "sanity": SANITY_FILTER,
+            "table": "player_games", "matchup": "matchup",
+            "defaults": ("rec_yds", "rec", "rec_td")},
+    "def": {"label": "Defense", "stats": DEFENSE, "sanity": DEF_SANITY,
+            "table": "player_defense", "matchup": None,
+            "defaults": ("tackles_combined", "sacks", "def_int")},
+    "st":  {"label": "Special Teams", "stats": SPECIAL, "sanity": ST_SANITY,
+            "table": SPECIAL_TABLE, "matchup": None,
+            "defaults": ("kick_ret_yds", "punt_ret_yds", "fgm")},
+}
+
+# The dev server and any single-group caller default to offense.
+STATS = OFFENSE
 DEFAULTS = ("pass_yds", "pass_td", "rush_yds")
 
 
@@ -50,10 +140,12 @@ def _validate_axes(x, y, z):
 
 
 @lru_cache(maxsize=64)
-def compute_payload(x, y, z) -> str:
-    return shared.compute_payload(DB_PATH, STATS, SANITY_FILTER, x, y, z,
+def compute_payload(x, y, z, group="off") -> str:
+    g = GROUPS[group]
+    return shared.compute_payload(DB_PATH, g["stats"], g["sanity"], x, y, z,
                                   clamp=True, pid_col="player_pfr_id",
-                                  legacy_max=True)
+                                  legacy_max=True,
+                                  table=g["table"], matchup=g["matchup"])
 
 
 if __name__ == "__main__":

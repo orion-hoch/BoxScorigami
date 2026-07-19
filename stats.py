@@ -29,16 +29,19 @@ def validate_axes(stats, x, y, z):
 
 
 def compute_payload(db, stats, sanity, x, y, z, clamp=False,
-                    pid_col="player_id", legacy_max=False) -> str:
+                    pid_col="player_id", legacy_max=False,
+                    table="player_games", matchup="matchup") -> str:
     validate_axes(stats, x, y, z)
     raw_cx, raw_cy, raw_cz = (stats[k]["col"] for k in (x, y, z))
 
-    def q(col, prefix=""):
-        return f"MAX({prefix}{col}, 0)" if clamp else f"{prefix}{col}"
+    def q(col):
+        return f"MAX({col}, 0)" if clamp else col
 
     cx, cy, cz = q(raw_cx), q(raw_cy), q(raw_cz)
     notnull = (f"{raw_cx} IS NOT NULL AND {raw_cy} IS NOT NULL "
                f"AND {raw_cz} IS NOT NULL")
+    # The box-score tables (player_defense, returns, ...) carry no matchup column.
+    matchup_sel = f"{matchup} AS matchup" if matchup else "NULL AS matchup"
     conn = open_db(db)
 
     rows = conn.execute(
@@ -48,19 +51,19 @@ def compute_payload(db, stats, sanity, x, y, z, clamp=False,
                    COUNT(*) AS n,
                    MIN(game_date) AS first_date,
                    MAX(game_date) AS last_date
-            FROM player_games
+            FROM {table}
             WHERE {notnull} AND {sanity}
             GROUP BY {cx}, {cy}, {cz}
         ),
         latest AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z,
-                   game_id, {pid_col} AS pid, player_name, team_abbr, matchup,
+                   game_id, {pid_col} AS pid, player_name, team_abbr, {matchup_sel},
                    game_date,
                    ROW_NUMBER() OVER (
                        PARTITION BY {cx}, {cy}, {cz}
                        ORDER BY game_date DESC, game_id DESC
                    ) AS rn
-            FROM player_games
+            FROM {table}
             WHERE {notnull} AND {sanity}
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,
@@ -102,15 +105,14 @@ def compute_payload(db, stats, sanity, x, y, z, clamp=False,
         f"""
         WITH counts AS (
             SELECT {cx} AS x, {cy} AS y, {cz} AS z, COUNT(*) AS n
-            FROM player_games
+            FROM {table}
             WHERE {notnull} AND {sanity}
             GROUP BY {cx}, {cy}, {cz}
         )
         SELECT p.{pid_col} AS player_id, p.player_name, COUNT(*) AS unique_cells
-        FROM player_games p
+        FROM {table} p
         JOIN counts c
-          ON {q(raw_cx, "p.")} = c.x AND {q(raw_cy, "p.")} = c.y
-         AND {q(raw_cz, "p.")} = c.z
+          ON {cx} = c.x AND {cy} = c.y AND {cz} = c.z
         WHERE c.n = 1 AND {sanity}
         GROUP BY p.{pid_col}, p.player_name
         ORDER BY unique_cells DESC, p.player_name

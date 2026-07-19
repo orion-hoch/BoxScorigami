@@ -1295,7 +1295,17 @@ document.getElementById('showLabels').addEventListener('change', (e) => {
 
 const SPORTS = {
   nba:  { label: 'NBA',  defaults: ['pts', 'reb', 'ast'] },
-  nfl:  { label: 'NFL',  defaults: ['rec_yds', 'rec', 'rec_td'] },
+  nfl:  {
+    label: 'NFL',
+    defaults: ['rec_yds', 'rec', 'rec_td'],
+    // Each group is its own stat list + tally directory under public/nfl/<key>/.
+    groups: [['off', 'Offense'], ['def', 'Defense'], ['st', 'Special Teams']],
+    groupDefaults: {
+      off: ['rec_yds', 'rec', 'rec_td'],
+      def: ['tackles_combined', 'sacks', 'def_int'],
+      st:  ['kick_ret_yds', 'punt_ret_yds', 'fgm'],
+    },
+  },
   mlb:  { label: 'MLB',  defaults: ['sb', 'rbi', 'hr'] },
   wnba: { label: 'WNBA', defaults: ['pts', 'reb', 'ast'] },
 };
@@ -1381,9 +1391,14 @@ let SPORT = 'nba';
 let MODE = 'game';
 let MIN_GAMES = true;
 const HAS_MIN_GAMES = new Set(['nba', 'nfl', 'wnba']);
+// MLB uses the same top-button slot for a playing-time qualifier instead.
+let QUALIFIED = true;
+const HAS_QUALIFIER = new Set(['mlb']);
+const QUALIFIER_TIP = 'Min 150 PA / 50 IP — keeps rate stats off tiny samples';
 const STATS_META = {};
 
 let POSITION = 'all';
+let GROUP = 'off';
 let WL_W = true, WL_L = true;
 const DUMP_CACHE = {};
 const MLB_POS_PRIMARY = [['all', 'All'], ['p', 'P'], ['pos', 'POS']];
@@ -1393,6 +1408,18 @@ const MLB_POS_FIELD = [
 ];
 const MLB_FULL_POS = new Set(['all', 'p']);
 
+// Only the rate axes actually on the cube need a qualifier, so a cube of pure
+// counting stats is never filtered.
+function qualDomains(x, y, z) {
+  if (!QUALIFIED || MODE !== 'season') return null;
+  const d = {};
+  for (const k of [x, y, z]) {
+    const q = STATS_META[k] && STATS_META[k].qual;
+    if (q) d[q] = true;
+  }
+  return (d.bat || d.pit) ? d : null;
+}
+
 function wlFilterValue() {
   if (WL_W && WL_L) return null;
   if (WL_W) return 1;
@@ -1400,7 +1427,7 @@ function wlFilterValue() {
   return -1;
 }
 
-function rollupCube(dump, x, y, z, wlFilter) {
+function rollupCube(dump, x, y, z, wlFilter, qual, minGames) {
   const idx = {}; dump.axes.forEach((k, i) => idx[k] = i);
   const ix = idx[x], iy = idx[y], iz = idx[z];
   const game = dump.mode === 'game';
@@ -1408,6 +1435,8 @@ function rollupCube(dump, x, y, z, wlFilter) {
   const cells = new Map();
   for (const ln of dump.lines) {
     if (wlFilter != null && ln.w !== wlFilter) continue;
+    if (qual && ((qual.bat && !ln.qb) || (qual.pit && !ln.qp))) continue;
+    if (minGames && ln.q !== 1) continue;
     const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];
     if (vx == null || vy == null || vz == null) continue;
     if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
@@ -1436,7 +1465,7 @@ function rollupCube(dump, x, y, z, wlFilter) {
     } else {
       cell = { p: c.p, r: c.r, a: c.a, n: c.n, d: top[2], pl: top[1], t: null,
                m: top[2] + ' season', g: null, gp: top[3], pid: top[0] };
-      cell.recent = recents.map(o => ({ pl: o[1], d: o[2], pid: o[0] }));
+      cell.recent = recents.map(o => ({ pl: o[1], d: o[2], gp: o[3], pid: o[0] }));
     }
     out.push(cell);
   }
@@ -1446,12 +1475,18 @@ function rollupCube(dump, x, y, z, wlFilter) {
   return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out };
 }
 
+// MLB splits its dumps by position; the others by stat group (NFL) or not at all.
+function dumpBase() {
+  return SPORT === 'mlb' ? `mlb/${POSITION}` : sportBase();
+}
+
 async function getDump() {
   const mode = MODE === 'season' ? 'season' : 'game';
-  const key = `${POSITION}/${mode}`;
+  const base = dumpBase();
+  const key = `${base}/${mode}`;
   if (DUMP_CACHE[key]) return DUMP_CACHE[key];
-  const url = `mlb/${POSITION}/${mode}.json.gz`;
-  statusEl.textContent = `loading ${POSITION.toUpperCase()} ${mode} data…`;
+  const url = `${base}/${mode}.json.gz`;
+  statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
   const bytes = await r.arrayBuffer();
@@ -1466,10 +1501,15 @@ async function getDump() {
   return d;
 }
 
+// Grouped sports (NFL) keep each stat group in its own subdirectory.
+function sportBase() {
+  return SPORTS[SPORT].groups ? `${SPORT}/${GROUP}` : SPORT;
+}
+
 async function loadStats() {
   const url = (SPORT === 'mlb')
     ? `mlb/${POSITION}/${MODE === 'season' ? 'stats-season' : 'stats'}.json`
-    : `${SPORT}/stats.json`;
+    : `${sportBase()}/stats.json`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ` + r.status);
   const stats = (await r.json()).stats;
@@ -1478,59 +1518,23 @@ async function loadStats() {
   return stats;
 }
 
+// Every sport now rolls its three axes up from one dump; there are no
+// per-combination tally files left to fetch.
 async function loadTally(x, y, z) {
-  if (SPORT === 'mlb') {
-    const dump = await getDump();
-    const wl = (MODE !== 'season' && MLB_FULL_POS.has(POSITION)) ? wlFilterValue() : null;
-    const r = rollupCube(dump, x, y, z, wl);
-    const mkAxis = (k, max) => ({ key: k, label: STATS_META[k].label, color: STATS_META[k].color, max });
-    return {
-      axes: { x: mkAxis(x, r.axes.x.max), y: mkAxis(y, r.axes.y.max), z: mkAxis(z, r.axes.z.max) },
-      cells: r.cells,
-    };
-  }
-  const fileKeys = [x, y, z].slice().sort();
-  let dir;
-  if (MODE === 'season') {
-    dir = (MIN_GAMES && HAS_MIN_GAMES.has(SPORT)) ? 'tally-season-min' : 'tally-season';
-  } else {
-    dir = 'tally';
-  }
-  const url = `${SPORT}/${dir}/${fileKeys.join('_')}.json`;
-  statusEl.textContent = `loading ${x}/${y}/${z}...`;
-  const r = await fetch(url);
-  if (!r.ok) {
-    const body = await r.text();
-    throw new Error(`GET ${url}: ${r.status} ${body}`);
-  }
-  const data = await r.json();
-
-  const userKeys = [x, y, z];
-  const map = userKeys.map(k => fileKeys.indexOf(k));
-  const fileMaxes = [data.axes.x.max, data.axes.y.max, data.axes.z.max];
-
-  const mkAxis = (k, idx) => ({
-    key: k,
-    label: STATS_META[k].label,
-    color: STATS_META[k].color,
-    max: fileMaxes[idx],
+  const dump = await getDump();
+  const wl = (SPORT === 'mlb' && MODE !== 'season' && MLB_FULL_POS.has(POSITION))
+    ? wlFilterValue() : null;
+  const qual = SPORT === 'mlb' ? qualDomains(x, y, z) : null;
+  const minGames = SPORT !== 'mlb' && MODE === 'season'
+    && MIN_GAMES && HAS_MIN_GAMES.has(SPORT);
+  const r = rollupCube(dump, x, y, z, wl, qual, minGames);
+  const mkAxis = (k, max) => ({
+    key: k, label: STATS_META[k].label, color: STATS_META[k].color, max,
   });
-  const axes = {
-    x: mkAxis(userKeys[0], map[0]),
-    y: mkAxis(userKeys[1], map[1]),
-    z: mkAxis(userKeys[2], map[2]),
+  return {
+    axes: { x: mkAxis(x, r.axes.x.max), y: mkAxis(y, r.axes.y.max), z: mkAxis(z, r.axes.z.max) },
+    cells: r.cells,
   };
-
-  const cells = data.cells.map(c => {
-    const v = [c.p, c.r, c.a];
-    return {
-      p: v[map[0]], r: v[map[1]], a: v[map[2]],
-      n: c.n, d: c.d, pl: c.pl, t: c.t, m: c.m, g: c.g, gp: c.gp, pid: c.pid,
-      recent: c.recent,
-    };
-  });
-
-  return { axes, cells };
 }
 
 let lastAxes = [];
@@ -1595,6 +1599,7 @@ async function loadSport(sport) {
   document.body.classList.toggle('sport-mlb', sport === 'mlb');
   MODE = 'game';
   MIN_GAMES = true;
+  QUALIFIED = true;
   COARSE = 1;
   const modeToggle = document.getElementById('modeToggle');
   modeToggle.querySelectorAll('button').forEach(b =>
@@ -1612,12 +1617,17 @@ async function loadSport(sport) {
   document.getElementById('yearFrom').value = '';
   document.getElementById('yearTo').value = '';
   const isMlb = sport === 'mlb';
-  document.getElementById('posBar').style.display = isMlb ? 'flex' : 'none';
+  const grouped = !!SPORTS[sport].groups;
+  document.getElementById('posBar').style.display =
+    (isMlb || grouped) ? 'flex' : 'none';
   if (isMlb) { POSITION = 'all'; WL_W = WL_L = true; buildPosBar(); }
+  if (grouped) { GROUP = SPORTS[sport].groups[0][0]; buildGroupBar(); }
   try {
     statusEl.textContent = `loading ${SPORTS[sport].label} ...`;
     const stats = await loadStats();
-    fillDropdowns(stats, isMlb ? mlbAxisDefaults(stats) : SPORTS[sport].defaults);
+    fillDropdowns(stats, isMlb ? mlbAxisDefaults(stats)
+                               : grouped ? SPORTS[sport].groupDefaults[GROUP]
+                                         : SPORTS[sport].defaults);
     await refresh();
   } catch (err) {
     statusEl.textContent = 'ERROR: ' + err.message;
@@ -1645,6 +1655,37 @@ function buildPosBar() {
     b.addEventListener('click', () => setPosition(b.dataset.pos)));
   bar.querySelectorAll('button[data-wl]').forEach(b =>
     b.addEventListener('click', () => setWl(b.dataset.wl)));
+}
+
+function buildGroupBar() {
+  const bar = document.getElementById('posBar');
+  bar.innerHTML = SPORTS[SPORT].groups.map(([k, l]) =>
+    `<button data-group="${k}" class="${k === GROUP ? 'active' : ''}">${l}</button>`
+  ).join('');
+  bar.querySelectorAll('button[data-group]').forEach(b =>
+    b.addEventListener('click', () => setGroup(b.dataset.group)));
+}
+
+// Keep the current axes if the new group still has all three; otherwise fall
+// back to that group's defaults, topped up from the head of the list.
+function groupAxisDefaults(stats) {
+  const keys = new Set(stats.map(s => s.key));
+  const cur = [axisXEl.value, axisYEl.value, axisZEl.value];
+  if (cur.every(k => keys.has(k)) && new Set(cur).size === 3) return cur;
+  const pick = (SPORTS[SPORT].groupDefaults[GROUP] || []).filter(k => keys.has(k));
+  for (const s of stats) { if (pick.length >= 3) break; if (!pick.includes(s.key)) pick.push(s.key); }
+  return pick.slice(0, 3);
+}
+
+async function setGroup(group) {
+  if (group === GROUP) return;
+  GROUP = group;
+  buildGroupBar();
+  try {
+    const stats = await loadStats();
+    fillDropdowns(stats, groupAxisDefaults(stats));
+    await refresh();
+  } catch (err) { statusEl.textContent = 'ERROR: ' + err.message; console.error(err); }
 }
 
 function setWl(which) {
@@ -1682,10 +1723,14 @@ async function setPosition(pos) {
 
 function updateMinGamesToggle() {
   const btn = document.getElementById('injuredToggle');
-  const show = MODE === 'season' && HAS_MIN_GAMES.has(SPORT);
+  const isQual = HAS_QUALIFIER.has(SPORT);
+  const show = MODE === 'season' && (isQual || HAS_MIN_GAMES.has(SPORT));
   btn.style.display = show ? 'block' : 'none';
-  btn.classList.toggle('active', MIN_GAMES);
-  btn.textContent = `Min Games: ${MIN_GAMES ? 'on' : 'off'}`;
+  btn.classList.toggle('active', isQual ? QUALIFIED : MIN_GAMES);
+  btn.textContent = isQual
+    ? `Qualified: ${QUALIFIED ? 'on' : 'off'}`
+    : `Min Games: ${MIN_GAMES ? 'on' : 'off'}`;
+  btn.title = isQual ? QUALIFIER_TIP : '';
 }
 
 document.querySelectorAll('#modeToggle button').forEach(b => {
@@ -1701,7 +1746,8 @@ document.querySelectorAll('#modeToggle button').forEach(b => {
 });
 
 document.getElementById('injuredToggle').addEventListener('click', () => {
-  MIN_GAMES = !MIN_GAMES;
+  if (HAS_QUALIFIER.has(SPORT)) QUALIFIED = !QUALIFIED;
+  else MIN_GAMES = !MIN_GAMES;
   updateMinGamesToggle();
   refresh();
 });

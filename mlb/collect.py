@@ -660,7 +660,12 @@ def build_season_unified(conn):
             CAST(CASE WHEN pit.p_outs>0 THEN round(100.0*3.0*(pit.p_bb+pit.p_h)/pit.p_outs) END AS INTEGER) AS whip,
             CAST(CASE WHEN pit.p_outs>0 THEN round(10.0*27.0*pit.p_k/pit.p_outs) END AS INTEGER) AS k9,
             CAST(CASE WHEN pit.p_bb>0 THEN round(10.0*pit.p_k/pit.p_bb) END AS INTEGER) AS kbb,
-            CAST(CASE WHEN pit.p_np>0 THEN round(1000.0*pit.p_s/pit.p_np) END AS INTEGER) AS strike_pct
+            CAST(CASE WHEN pit.p_np>0 THEN round(1000.0*pit.p_s/pit.p_np) END AS INTEGER) AS strike_pct,
+            -- Playing-time qualifiers. Rate stats computed off a handful of PA or
+            -- outs (a 1-for-1 season, a 1-out 7-ER outing) are what stretch the
+            -- rate axes: unfiltered ERA runs to 189.00 and AVG to 1.000.
+            CASE WHEN COALESCE(bevt.pa, 0) >= 150 THEN 1 ELSE 0 END AS qual_bat,
+            CASE WHEN COALESCE(pit.p_outs, 0) >= 150 THEN 1 ELSE 0 END AS qual_pit
         FROM ids i
         LEFT JOIN bat  ON bat.player_id=i.player_id  AND bat.season=i.season
         LEFT JOIN bevt ON bevt.player_id=i.player_id AND bevt.season=i.season
@@ -694,6 +699,11 @@ PIT_COUNT_SEASON = PIT_COUNT_GAME + [
 ]
 PIT_RATE = [("win_pct", "Win%"), ("era", "ERA"), ("whip", "WHIP"),
             ("k9", "K/9"), ("kbb", "K:BB"), ("strike_pct", "Strike%")]
+
+# Which playing-time qualifier each rate stat depends on. Counting stats have
+# none, so the Qualified toggle only bites on cubes that use a rate axis.
+RATE_DOMAIN = ({k: "bat" for k, _ in BAT_RATE}
+               | {k: "pit" for k, _ in PIT_RATE})
 POSITIONS = {
     "all": ("All", None, "full"), "p": ("Pitcher", "P", "full"),
     "pos": ("Position Players", None, "bat"),
@@ -719,6 +729,8 @@ def stats_json(defs):
         s = {"key": key, "label": label, "color": PALETTE[i % len(PALETTE)]}
         if key in RATE_SCALE:
             s["scale"], s["decimals"] = RATE_SCALE[key]
+        if key in RATE_DOMAIN:
+            s["qual"] = RATE_DOMAIN[key]
         out.append(s)
     return {"stats": out}
 
@@ -735,7 +747,10 @@ def emit_dump(conn, poskey, mode):
     else:
         where = f"WHERE position='{pos_abbr}'"
     wl = mode == "game" and domain == "full"
-    part_cols = keys + (["won"] if wl else [])
+    # Season lines carry the qualifier flags the way game lines carry `won`:
+    # folded into the partition key so the client can filter without a refetch.
+    qual = mode == "season"
+    part_cols = keys + (["won"] if wl else []) + (["qual_bat", "qual_pit"] if qual else [])
     part = ",".join(part_cols)
     if mode == "game":
         extra = "player_id, player_name, team_abbr, matchup, game_id, game_date, won"
@@ -758,6 +773,9 @@ def emit_dump(conn, poskey, mode):
             cur = {"v": [r[c] for c in keys], "n": r["n"], "r": []}
             if wl:
                 cur["w"] = r["won"]
+            if qual:
+                cur["qb"] = r["qual_bat"]
+                cur["qp"] = r["qual_pit"]
             lines.append(cur)
         if mode == "game":
             cur["r"].append([r["player_id"], r["player_name"], r["team_abbr"], r["matchup"],
