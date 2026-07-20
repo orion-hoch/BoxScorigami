@@ -1468,15 +1468,17 @@ function rollupCube(dump, x, y, z, wlFilter, qual, minGames) {
     const recents = c.occ.slice().sort(game ? cmpGame : cmpSeason).slice(0, 5);
     const top = recents[0];
     let cell;
+    // A unique statline is its own recent list -- the box would just repeat the
+    // row above it, so leave `recent` off entirely (same rule as stats.py).
     if (game) {
       cell = { p: c.p, r: c.r, a: c.a, n: c.n, d: top[5], pl: top[1], t: top[2],
                m: top[3], g: top[4], pid: top[0], w: top[6] };
-      cell.recent = recents.map(o => ({ pl: o[1], d: o[5], t: o[2],
+      if (c.n >= 2) cell.recent = recents.map(o => ({ pl: o[1], d: o[5], t: o[2],
                m: o[3], g: o[4], pid: o[0], w: o[6] }));
     } else {
       cell = { p: c.p, r: c.r, a: c.a, n: c.n, d: top[2], pl: top[1], t: null,
                m: top[2] + ' season', g: null, gp: top[3], pid: top[0] };
-      cell.recent = recents.map(o => ({ pl: o[1], d: o[2], gp: o[3], pid: o[0] }));
+      if (c.n >= 2) cell.recent = recents.map(o => ({ pl: o[1], d: o[2], gp: o[3], pid: o[0] }));
     }
     out.push(cell);
   }
