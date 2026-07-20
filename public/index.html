@@ -19,6 +19,10 @@
   }
   #info { top: 12px; left: 12px; min-width: 280px; max-width: 340px;
     max-height: calc(100vh - 24px); overflow-y: auto; overflow-x: hidden; }
+  /* MLB adds position + W/L rows; widen so they fit on fewer lines, and stop
+     short of the BBox status box in the bottom-left corner. */
+  body.sport-mlb #info { min-width: 340px; max-width: 420px;
+    max-height: calc(100vh - 72px); }
   #detail { top: 54px; right: 12px; min-width: 260px; max-width: 320px; display: none; }
   #leaders {
     bottom: 12px; right: 12px; max-width: 280px; max-height: 50vh; overflow: hidden;
@@ -50,8 +54,9 @@
   }
   #coarseToggle button:hover { color: #e6e8eb; }
   #coarseToggle button.active { background: #2a2f36; color: #f7c948; border-color: #f7c948; }
-  #coarseToggle .mlb-only { display: none; }
-  body.sport-mlb #coarseToggle .mlb-only { display: block; }
+  #coarseToggle .hi-k { display: none; }
+  body.sport-mlb #coarseToggle .hi-k,
+  body.sport-nfl #coarseToggle .hi-k { display: block; }
   #axisGrid {
     display: grid; grid-template-columns: 24px 1fr; gap: 5px 8px; align-items: center;
     margin-top: 6px; padding: 6px 9px;
@@ -276,8 +281,8 @@
         <button data-k="2">2×</button>
         <button data-k="3">3×</button>
         <button data-k="4">4×</button>
-        <button data-k="5" class="mlb-only">5×</button>
-        <button data-k="6" class="mlb-only">6×</button>
+        <button data-k="5" class="hi-k">5×</button>
+        <button data-k="6" class="hi-k">6×</button>
       </div>
     </div>
   </div>
@@ -1623,7 +1628,9 @@ async function loadSportInner(sport) {
     b.classList.toggle('active', b.dataset.sport === sport);
   });
   location.hash = `sport=${sport}`;
-  document.body.classList.toggle('sport-mlb', sport === 'mlb');
+  for (const s of Object.keys(SPORTS)) {
+    document.body.classList.toggle(`sport-${s}`, s === sport);
+  }
   MODE = 'game';
   MIN_GAMES = true;
   QUALIFIED = true;
