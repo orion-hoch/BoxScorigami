@@ -10,13 +10,13 @@
 	root * /srv
 	encode gzip zstd
 
-	# The dumps are already gzipped on disk. Advertising that lets the browser
-	# inflate them natively while streaming, instead of the page pulling the
-	# whole file into an ArrayBuffer and inflating it in JS. `encode` above
-	# skips any response that already carries a Content-Encoding.
-	@gz path *.json.gz
-	header @gz {
-		Content-Encoding gzip
+	# The dumps are pre-compressed with brotli on disk (~40% smaller than gzip).
+	# Advertising the encoding lets the browser inflate them natively while
+	# streaming, instead of the page decompressing in JS. `encode` above skips
+	# any response that already carries a Content-Encoding.
+	@br path *.json.br
+	header @br {
+		Content-Encoding br
 		Content-Type application/json
 	}
 

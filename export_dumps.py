@@ -1,4 +1,4 @@
-"""Emit one gzipped dump per sport/mode instead of C(n,3) precomputed combo files.
+"""Emit one brotli dump per sport/mode instead of C(n,3) precomputed combo files.
 
 MLB has worked this way since it moved to mlb/collect.py's emit_dump: store each
 distinct stat line once and roll the three chosen axes up in the browser. The
@@ -16,7 +16,7 @@ are [pid, name, season, gp]. Season lines carry "q" (games-played qualifier) so
 one dump serves both states of the Min Games toggle.
 """
 import argparse
-import gzip
+import brotli
 import importlib
 import json
 import sys
@@ -125,9 +125,12 @@ def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
     dest_dir.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"mode": mode, "axes": keys, "lines": lines},
                          separators=(",", ":"))
-    out = dest_dir / f"{mode}.json.gz"
-    with gzip.open(out, "wt", encoding="utf-8", compresslevel=9) as fh:
-        fh.write(payload)
+    # Brotli q9: ~40% smaller than gzip-9, served with Content-Encoding: br so
+    # the browser inflates natively (see Caddyfile). q11 is far slower for a
+    # marginal gain on files this size.
+    out = dest_dir / f"{mode}.json.br"
+    data = brotli.compress(payload.encode("utf-8"), quality=9)
+    out.write_bytes(data)
     return len(lines), len(payload), out.stat().st_size
 
 

@@ -233,7 +233,12 @@
       display: flex; gap: 6px; pointer-events: none;
     }
     #topdock { top: calc(6px + env(safe-area-inset-top)); flex-direction: column; }
-    #dock { bottom: calc(6px + env(safe-area-inset-bottom)); flex-direction: column-reverse; }
+    /* Center the small bars (leaderboard, made-by) to content width so the
+       leaderboard's expand button sits by its title instead of flung to the
+       screen edge. The main panels opt back into full width below. */
+    #dock { bottom: calc(6px + env(safe-area-inset-bottom));
+            flex-direction: column-reverse; align-items: center; }
+    #info, #detail { align-self: stretch; }
     #topdock > *, #dock > * {
       position: static; pointer-events: auto;
       min-width: 0; max-width: none; width: auto; transform: none;
@@ -357,6 +362,8 @@
   <div id="detailBody"></div>
 </div>
 
+<div id="status">loading...</div>
+
 <div id="leaders" class="panel minimized">
   <div class="panel-header">
     <h2>BoxScorigami Leaderboard</h2>
@@ -365,8 +372,6 @@
   <div class="hint" id="lbHint">Most Unique Stat Lines</div>
   <div id="lbList"></div>
 </div>
-
-<div id="status">loading...</div>
 </div>
 
 <script type="importmap">
@@ -766,9 +771,13 @@ function buildCube(data, preserveView) {
   controls.update();
   framedDiag = diag;
 
-  buildEnclosedMesh();
-  if (state.enclosedMesh) {
-    state.enclosedMesh.visible = document.getElementById('showEnclosed').checked;
+  // Near-miss detection scans the whole bounding volume, which for wide axes
+  // (e.g. NFL special-teams return yards, 304×207) is ~600k cells and enough
+  // GC churn to crash a memory-tight mobile tab. It's off by default and hidden
+  // anyway, so only pay for it when the toggle is actually on.
+  if (document.getElementById('showEnclosed').checked) {
+    buildEnclosedMesh();
+    if (state.enclosedMesh) state.enclosedMesh.visible = true;
   }
 
   resetPeel();
@@ -781,20 +790,24 @@ function buildEnclosedMesh() {
   if (state.enclosedMesh || !state.occupied) return;
   const { MAX_X, MAX_Y, MAX_Z, base, occupied } = state;
 
+  // A near-miss is an empty cell with all 6 neighbors occupied, so it must
+  // border an occupied cell. Scanning the neighbors of occupied cells (~6·|occ|)
+  // instead of the full bounding volume turns a 600k-cell sweep into a ~36k one
+  // for wide axes, with identical results.
   const positions = [];
-  for (let p = base.x; p <= base.x + MAX_X; p++) {
-    for (let r = base.y; r <= base.y + MAX_Y; r++) {
-      for (let a = base.z; a <= base.z + MAX_Z; a++) {
-        if (occupied.has(`${p},${r},${a}`)) continue;
-        let allOccupied = true;
-        for (const [dp, dr, da] of NEIGHBOR_OFFSETS_6) {
-          if (!occupied.has(`${p + dp},${r + dr},${a + da}`)) {
-            allOccupied = false;
-            break;
-          }
-        }
-        if (allOccupied) positions.push([p, r, a]);
+  const seen = new Set();
+  for (const cellKey of occupied.keys()) {
+    const [cp, cr, ca] = cellKey.split(',').map(Number);
+    for (const [dp, dr, da] of NEIGHBOR_OFFSETS_6) {
+      const p = cp + dp, r = cr + dr, a = ca + da;
+      const key = `${p},${r},${a}`;
+      if (occupied.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      let allOccupied = true;
+      for (const [np, nr, na] of NEIGHBOR_OFFSETS_6) {
+        if (!occupied.has(`${p + np},${r + nr},${a + na}`)) { allOccupied = false; break; }
       }
+      if (allOccupied) positions.push([p, r, a]);
     }
   }
   if (positions.length === 0) return;
@@ -1354,6 +1367,7 @@ document.querySelectorAll('.panel-btn').forEach((btn) => {
 });
 
 document.getElementById('showEnclosed').addEventListener('change', (e) => {
+  if (e.target.checked) buildEnclosedMesh();   // built lazily on first enable
   if (state.enclosedMesh) state.enclosedMesh.visible = e.target.checked;
 });
 document.getElementById('peelToggle').addEventListener('click', (e) => {
@@ -1569,21 +1583,14 @@ async function getDump() {
   const base = dumpBase();
   const key = `${base}/${mode}`;
   if (DUMP_CACHE[key]) return DUMP_CACHE[key];
-  const url = `${base}/${mode}.json.gz`;
+  const url = `${base}/${mode}.json.br`;
   statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
-  let d;
-  if ((r.headers.get('content-type') || '').includes('json')) {
-    // Server declared Content-Encoding: gzip, so the transfer is already
-    // inflated. r.json() parses off the stream with no giant JS string.
-    d = await r.json();
-  } else {
-    // Opaque .gz (file:// or a server without the header rule): inflate here,
-    // still streaming rather than buffering the whole file first.
-    const stream = r.body.pipeThrough(new DecompressionStream('gzip'));
-    d = await new Response(stream).json();
-  }
+  // Dumps are brotli on disk; the server sets Content-Encoding: br so the
+  // browser inflates natively and r.json() parses straight off the stream.
+  // (There is no JS brotli decoder, so this depends on that header.)
+  const d = await r.json();
   DUMP_CACHE[key] = d;
   return d;
 }
