@@ -81,6 +81,8 @@ def init_db(conn):
 
     CREATE INDEX IF NOT EXISTS idx_pg_season ON player_games(season);
     CREATE INDEX IF NOT EXISTS idx_pg_player ON player_games(player_pfr_id);
+    -- defense/special-teams dumps borrow matchup from here by (game, team)
+    CREATE INDEX IF NOT EXISTS idx_pg_game_team ON player_games(game_id, team_abbr);
 
     CREATE TABLE IF NOT EXISTS seasons_enumerated (
         season         INTEGER PRIMARY KEY,

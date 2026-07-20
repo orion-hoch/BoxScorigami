@@ -31,7 +31,8 @@ DEFENSE = {
     "tackles_solo":     {"col": "tackles_solo",     "label": "Solo Tk",  "color": "#ff8e8e"},
     "tackles_assists":  {"col": "tackles_assists",  "label": "Ast Tk",   "color": "#ffb3b3"},
     "sacks":            {"col": "CAST(sacks * 2 AS INT)",
-                         "label": "Sacks (½)", "color": "#a07bff"},
+                         "label": "Sacks", "color": "#a07bff",
+                         "scale": 2, "decimals": 1},
     "qb_hits":          {"col": "qb_hits",          "label": "QB Hits",  "color": "#c39bff"},
     "tackles_loss":     {"col": "tackles_loss",     "label": "TFL",      "color": "#8ee27a"},
     "def_int":          {"col": "def_int",          "label": "INT",      "color": "#f7c948"},
@@ -114,15 +115,21 @@ ST_SANITY = shared.sanity_filter([
 ] + [f"{c} < 0" for c in ("kick_ret", "kick_ret_td", "punt_ret", "punt_ret_td",
                           "fgm", "fga", "xpm", "punt")])
 
+# PFR's defense/returns/kicking box scores don't repeat the matchup, but
+# player_games already has one per (game, team) -- borrow it. `t` is the dump
+# exporter's alias for the source table.
+MATCHUP_LOOKUP = """(SELECT p.matchup FROM player_games p
+     WHERE p.game_id = t.game_id AND p.team_abbr = t.team_abbr LIMIT 1)"""
+
 GROUPS = {
     "off": {"label": "Offense", "stats": OFFENSE, "sanity": SANITY_FILTER,
             "table": "player_games", "matchup": "matchup",
             "defaults": ("rec_yds", "rec", "rec_td")},
     "def": {"label": "Defense", "stats": DEFENSE, "sanity": DEF_SANITY,
-            "table": "player_defense", "matchup": None,
+            "table": "player_defense", "matchup": MATCHUP_LOOKUP,
             "defaults": ("tackles_combined", "sacks", "def_int")},
     "st":  {"label": "Special Teams", "stats": SPECIAL, "sanity": ST_SANITY,
-            "table": SPECIAL_TABLE, "matchup": None,
+            "table": SPECIAL_TABLE, "matchup": MATCHUP_LOOKUP,
             "defaults": ("kick_ret_yds", "punt_ret_yds", "fgm")},
 }
 

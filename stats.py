@@ -40,7 +40,8 @@ def compute_payload(db, stats, sanity, x, y, z, clamp=False,
     cx, cy, cz = q(raw_cx), q(raw_cy), q(raw_cz)
     notnull = (f"{raw_cx} IS NOT NULL AND {raw_cy} IS NOT NULL "
                f"AND {raw_cz} IS NOT NULL")
-    # The box-score tables (player_defense, returns, ...) carry no matchup column.
+    # An SQL expression over the aliased source table `t`, so tables without a
+    # matchup column of their own can look one up.
     matchup_sel = f"{matchup} AS matchup" if matchup else "NULL AS matchup"
     conn = open_db(db)
 
@@ -63,7 +64,7 @@ def compute_payload(db, stats, sanity, x, y, z, clamp=False,
                        PARTITION BY {cx}, {cy}, {cz}
                        ORDER BY game_date DESC, game_id DESC
                    ) AS rn
-            FROM {table}
+            FROM {table} t
             WHERE {notnull} AND {sanity}
         )
         SELECT c.x, c.y, c.z, c.n, c.last_date,

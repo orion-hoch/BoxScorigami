@@ -34,17 +34,21 @@ SPORTS = {
              "where": "season_type = 'Regular Season'", "min_gp": 15},
     # NFL clamps negative game values (lost yardage) to 0, matching its
     # compute_payload(clamp=True). Season averages were never clamped.
+    # Football is a 17-game sport -- per-game averages round to mush (2 rec TD
+    # a year is 0), so NFL defaults to totals and ships both for the toggle.
     "nfl":  {"db": "nfl/nfl_full.sqlite",  "pid": "player_pfr_id",
              "where": "game_type = 'REG'",              "min_gp": 6,
-             "clamp": True},
+             "clamp": True,
+             "season_modes": [("season", "SUM({col})"), ("season-avg", None)]},
 }
 
 SEASON_AGG = "CAST(ROUND(1.0 * SUM({col}) / COUNT(*)) AS INT)"
 
 
-def build_season_avg(conn, stats, sanity, pid, where, table, dest):
-    """Per-game averages by player-season, one column per stat key."""
-    aggs = ", ".join(SEASON_AGG.format(col=s["col"]) + f" AS {k}"
+def build_season_avg(conn, stats, sanity, pid, where, table, dest,
+                     agg=SEASON_AGG):
+    """Season rollup by player-season, one column per stat key."""
+    aggs = ", ".join(agg.format(col=s["col"]) + f" AS {k}"
                      for k, s in stats.items())
     conn.execute(f"DROP TABLE IF EXISTS {dest}")
     conn.execute(f"""
@@ -63,7 +67,8 @@ def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
     if mode == "game":
         col = (lambda c: f"MAX({c}, 0)") if clamp else (lambda c: c)
         sel = ", ".join(f"{col(s['col'])} AS {k}" for k, s in stats.items())
-        # NFL's box-score tables (player_defense, returns/kicking) carry no matchup.
+        # `matchup` is an SQL expression over the aliased source table `t`, so a
+        # table without its own matchup column can look one up (see nfl/server.py).
         mu = f"{matchup} AS matchup" if matchup else "NULL AS matchup"
         extra = (f"{pid} AS pid, player_name, team_abbr, {mu}, "
                  f"game_id, game_date")
@@ -89,7 +94,7 @@ def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
     part = ", ".join(part_cols)
     rows = conn.execute(f"""
         WITH src AS (
-            SELECT {sel}, {extra} FROM {table} WHERE {src_where}
+            SELECT {sel}, {extra} FROM {table} t WHERE {src_where}
         ), ranked AS (
             SELECT {part}, {', '.join(extra_names)},
                    ROW_NUMBER() OVER (PARTITION BY {part} ORDER BY {order}) rn,
@@ -157,14 +162,18 @@ def main():
         print(f"\n== {label} ({len(stats)} stats) ==")
         (dest_dir / "stats.json").parent.mkdir(parents=True, exist_ok=True)
         (dest_dir / "stats.json").write_text(json.dumps(
-            {"stats": [{"key": k, "label": v["label"], "color": v["color"]}
+            {"stats": [{"key": k, **{f: v[f] for f in
+                        ("label", "color", "scale", "decimals") if f in v}}
                        for k, v in stats.items()]}, separators=(",", ":")))
 
-        season_tbl = f"season_avg_dump{'_' + tag if tag else ''}"
-        build_season_avg(conn, stats, sanity, cfg["pid"], cfg["where"],
-                         table, season_tbl)
+        jobs_by_mode = [("game", table)]
+        for mode, agg in cfg.get("season_modes", [("season", None)]):
+            tbl = f"season_dump_{mode.replace('-', '_')}{'_' + tag if tag else ''}"
+            build_season_avg(conn, stats, sanity, cfg["pid"], cfg["where"],
+                             table, tbl, agg or SEASON_AGG)
+            jobs_by_mode.append((mode, tbl))
 
-        for mode, tbl in (("game", table), ("season", season_tbl)):
+        for mode, tbl in jobs_by_mode:
             n, raw, gz = emit(conn, dest_dir, mode, stats, table=tbl,
                               sanity=sanity, pid=cfg["pid"],
                               where=cfg["where"], min_gp=cfg["min_gp"],
