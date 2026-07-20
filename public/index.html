@@ -223,30 +223,32 @@
 
   /* On desktop the dock is invisible to layout, so the panels inside it keep
      positioning themselves against the viewport exactly as before. */
-  #dock { display: contents; }
+  #dock, #topdock { display: contents; }
 
   @media (max-width: 760px) {
-    #tabs { left: 6px; right: 6px; top: 6px; transform: none; }
-    #tabs button { flex: 1; padding: 6px 0; font-size: 13px; letter-spacing: 0; }
+    /* Both docks stack their children in normal flow, so the bars size and
+       space themselves instead of relying on hand-tuned top/bottom offsets. */
+    #topdock, #dock {
+      position: fixed; left: 6px; right: 6px; z-index: 20;
+      display: flex; gap: 6px; pointer-events: none;
+    }
+    #topdock { top: calc(6px + env(safe-area-inset-top)); flex-direction: column; }
+    #dock { bottom: calc(6px + env(safe-area-inset-bottom)); flex-direction: column-reverse; }
+    #topdock > *, #dock > * {
+      position: static; pointer-events: auto;
+      min-width: 0; max-width: none; width: auto; transform: none;
+    }
 
-    #topRightControls { top: 52px; left: 6px; right: 6px;
-                        flex-wrap: wrap; justify-content: center; }
+    #tabs button { flex: 1; padding: 6px 0; font-size: 13px; letter-spacing: 0; }
+    #topRightControls { flex-wrap: wrap; justify-content: center; }
     #modeToggle button { padding: 4px 10px; }
     #injuredToggle, #totalsToggle { padding: 6px 10px; }
 
-    /* The panels drop out of absolute positioning and stack in normal flow,
-       so they cannot overlap each other however tall their contents get. */
-    #dock {
-      display: flex; flex-direction: column-reverse; gap: 6px;
-      position: fixed; left: 6px; right: 6px; z-index: 20;
-      bottom: calc(6px + env(safe-area-inset-bottom));
-      pointer-events: none;
+    /* Repeated for body.sport-mlb, whose desktop width clamp outspecifies the
+       `#dock > *` reset above. */
+    #info, body.sport-mlb #info {
+      max-height: 50vh; min-width: 0; max-width: none; width: auto;
     }
-    #dock > * {
-      position: static; pointer-events: auto;
-      min-width: 0; max-width: none; width: auto;
-    }
-    #info, body.sport-mlb #info { max-height: 50vh; }
     #leaders { max-height: 45vh; }
     #detail .recent-list { max-height: 30vh; }
     #status { font-size: 11px; padding: 6px 10px; }
@@ -260,6 +262,7 @@
 <body>
 <canvas id="canvas"></canvas>
 
+<div id="topdock">
 <div id="tabs">
   <button data-sport="nba">NBA</button>
   <button data-sport="wnba">WNBA</button>
@@ -273,6 +276,7 @@
     <button data-mode="game" class="active">Single Game</button>
     <button data-mode="season">Season</button>
   </div>
+</div>
 </div>
 
 <div id="dock">
@@ -361,9 +365,9 @@
   <div class="hint" id="lbHint">Most Unique Stat Lines</div>
   <div id="lbList"></div>
 </div>
-</div>
 
 <div id="status">loading...</div>
+</div>
 
 <script type="importmap">
 {
@@ -515,10 +519,31 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 
+// The old framing used a fixed distance, which only fits a landscape window —
+// in portrait the horizontal frustum is much narrower than the vertical one and
+// the cube spills off both sides. Fit against whichever axis is tighter.
+const VIEW_DIR = new THREE.Vector3(0.9, 0.7, 1.1).normalize();
+function fitDistance(diag) {
+  const vHalf = THREE.MathUtils.degToRad(camera.fov) / 2;
+  const hHalf = Math.atan(Math.tan(vHalf) * camera.aspect);
+  // Floor of 12 kept from the old framing: axis labels scale off maxDim, so a
+  // small cube framed tightly would push its own labels off screen.
+  return (Math.max(diag, 12) / 2) / Math.sin(Math.min(vHalf, hHalf)) * 1.1;
+}
+
+let wasPortrait = window.innerWidth < window.innerHeight;
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // Re-fit only when the orientation actually flips, so a phone rotation doesn't
+  // leave the cube cropped but an ordinary window drag keeps the user's zoom.
+  const portrait = window.innerWidth < window.innerHeight;
+  if (portrait !== wasPortrait && framedDiag > 0) {
+    wasPortrait = portrait;
+    const off = camera.position.clone().sub(controls.target);
+    camera.position.copy(controls.target).add(off.setLength(fitDistance(framedDiag)));
+  }
 });
 
 const cubeGroup = new THREE.Group();
@@ -729,14 +754,13 @@ function buildCube(data, preserveView) {
 
   const cx = MAX_X / 2, cy = MAX_Y / 2, cz = MAX_Z / 2;
   const diag = Math.sqrt(MAX_X * MAX_X + MAX_Y * MAX_Y + MAX_Z * MAX_Z);
-  const r0 = Math.max(diag, 12) * 0.9;
   if (preserveView && framedDiag > 0) {
     const offset = camera.position.clone().sub(controls.target).multiplyScalar(diag / framedDiag);
     controls.target.set(cx, cy, cz);
     camera.position.set(cx + offset.x, cy + offset.y, cz + offset.z);
   } else {
     controls.target.set(cx, cy, cz);
-    camera.position.set(cx + r0 * 0.9, cy + r0 * 0.7, cz + r0 * 1.1);
+    camera.position.set(cx, cy, cz).add(VIEW_DIR.clone().multiplyScalar(fitDistance(diag)));
   }
   camera.lookAt(controls.target);
   controls.update();
