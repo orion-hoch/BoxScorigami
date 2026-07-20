@@ -669,7 +669,9 @@ function buildCube(data, preserveView) {
   labelX.position.set(MAX_X + pad + labelOffset, -pad, -pad);
   labelY.position.set(-pad, MAX_Y + pad + labelOffset, -pad);
   labelZ.position.set(-pad, -pad, MAX_Z + pad + labelOffset);
-  const labelOrigin = makeLabel(`${base.x},${base.y},${base.z}`, '#8b94a0', labelHeight * 0.6);
+  const labelOrigin = makeLabel(
+    `${fmtStat(axes.x.key, base.x)},${fmtStat(axes.y.key, base.y)},${fmtStat(axes.z.key, base.z)}`,
+    '#8b94a0', labelHeight * 0.6);
   labelOrigin.position.set(-pad - labelOffset * 0.5, -pad - labelOffset * 0.5, -pad - labelOffset * 0.5);
   labelsGroup.add(labelX, labelY, labelZ, labelOrigin);
   cubeGroup.add(axesGroup);
@@ -878,8 +880,9 @@ function fmtStat(key, v) {
 function fmtAxis(c) {
   const a = state.axes;
   if (COARSE > 1) {
-    const rng = v => `${v * COARSE}–${v * COARSE + COARSE - 1}`;
-    return `${rng(c.p)} ${a.x.label.toLowerCase()} · ${rng(c.r)} ${a.y.label.toLowerCase()} · ${rng(c.a)} ${a.z.label.toLowerCase()}`;
+    const rng = (k, v) =>
+      `${fmtStat(k, v * COARSE)}–${fmtStat(k, v * COARSE + COARSE - 1)}`;
+    return `${rng(a.x.key, c.p)} ${a.x.label.toLowerCase()} · ${rng(a.y.key, c.r)} ${a.y.label.toLowerCase()} · ${rng(a.z.key, c.a)} ${a.z.label.toLowerCase()}`;
   }
   return `${fmtStat(a.x.key, c.p)} ${a.x.label.toLowerCase()} · ${fmtStat(a.y.key, c.r)} ${a.y.label.toLowerCase()} · ${fmtStat(a.z.key, c.a)} ${a.z.label.toLowerCase()}`;
 }
@@ -897,7 +900,7 @@ function showDetailForCell(c) {
   const seasonMode = MODE === 'season';
   const ax = state.axes;
   const statlineRow = (COARSE > 1 && typeof c.sp === 'number')
-    ? `<div class="row"><span class="k">Statline</span><span class="v">${c.sp} ${ax.x.label.toLowerCase()} · ${c.sr} ${ax.y.label.toLowerCase()} · ${c.sa} ${ax.z.label.toLowerCase()}</span></div>`
+    ? `<div class="row"><span class="k">Statline</span><span class="v">${fmtStat(ax.x.key, c.sp)} ${ax.x.label.toLowerCase()} · ${fmtStat(ax.y.key, c.sr)} ${ax.y.label.toLowerCase()} · ${fmtStat(ax.z.key, c.sa)} ${ax.z.label.toLowerCase()}</span></div>`
     : '';
   const gamesRow = typeof c.gp === 'number'
     ? `<div class="row"><span class="k">Games</span><span class="v">${c.gp}</span></div>`
