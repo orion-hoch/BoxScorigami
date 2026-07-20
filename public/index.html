@@ -25,8 +25,15 @@
   body.sport-mlb #info { min-width: 340px; max-width: 420px;
     max-height: calc(100vh - 72px); }
   #detail { top: 54px; right: 12px; min-width: 260px; max-width: 320px; display: none; }
+  /* Leaderboard sits on top, the "Made by · BBox" line beneath it, as one
+     bottom-right stack (column-reverse over the status/leaders DOM order).
+     Same grouping on desktop and mobile. */
+  #brdock {
+    position: absolute; bottom: 12px; right: 12px; z-index: 5;
+    display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 8px;
+  }
   #leaders {
-    bottom: 12px; right: 12px; max-width: 280px; max-height: 50vh; overflow: hidden;
+    position: static; max-width: 280px; max-height: 50vh; overflow: hidden;
     display: flex; flex-direction: column;
   }
   h1, h2 { font-size: 13px; margin: 0 0 5px 0; letter-spacing: .02em; }
@@ -111,7 +118,7 @@
   .lbRow .ct { color: #f7c948; font-variant-numeric: tabular-nums; font-size: 12px; }
 
   #status {
-    position: absolute; bottom: 12px; left: 12px; padding: 8px 12px;
+    padding: 8px 12px;
     background: rgba(20,22,26,.8); border: 2px solid #3a4150; border-radius: 6px; font-size: 12px;
   }
 
@@ -239,6 +246,8 @@
     #dock { bottom: calc(6px + env(safe-area-inset-bottom));
             flex-direction: column-reverse; align-items: center; }
     #info, #detail { align-self: stretch; }
+    /* Full-width so its leaderboard/made-by children center on screen. */
+    #brdock { align-self: stretch; align-items: center; gap: 6px; }
     #topdock > *, #dock > * {
       position: static; pointer-events: auto;
       min-width: 0; max-width: none; width: auto; transform: none;
@@ -362,6 +371,7 @@
   <div id="detailBody"></div>
 </div>
 
+<div id="brdock">
 <div id="status">loading...</div>
 
 <div id="leaders" class="panel minimized">
@@ -371,6 +381,7 @@
   </div>
   <div class="hint" id="lbHint">Most Unique Stat Lines</div>
   <div id="lbList"></div>
+</div>
 </div>
 </div>
 
