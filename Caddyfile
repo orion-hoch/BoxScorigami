@@ -9,5 +9,16 @@
 :{$PORT:8080} {
 	root * /srv
 	encode gzip zstd
+
+	# The dumps are already gzipped on disk. Advertising that lets the browser
+	# inflate them natively while streaming, instead of the page pulling the
+	# whole file into an ArrayBuffer and inflating it in JS. `encode` above
+	# skips any response that already carries a Content-Encoding.
+	@gz path *.json.gz
+	header @gz {
+		Content-Encoding gzip
+		Content-Type application/json
+	}
+
 	file_server
 }

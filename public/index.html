@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>BoxScorigami</title>
 <link rel="icon" type="image/svg+xml" href="boxscorigami.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -219,6 +220,41 @@
   #posBar button:hover { color:#e6e8eb; }
   #posBar button.active { background:#2a2f36; color:#f7c948; border-color:#3a4049; }
   #posBar .pos-sep { width:1px; align-self:stretch; margin:1px 3px; background:#2a2f36; }
+
+  /* On desktop the dock is invisible to layout, so the panels inside it keep
+     positioning themselves against the viewport exactly as before. */
+  #dock { display: contents; }
+
+  @media (max-width: 760px) {
+    #tabs { left: 6px; right: 6px; top: 6px; transform: none; }
+    #tabs button { flex: 1; padding: 6px 0; font-size: 13px; letter-spacing: 0; }
+
+    #topRightControls { top: 52px; left: 6px; right: 6px;
+                        flex-wrap: wrap; justify-content: center; }
+    #modeToggle button { padding: 4px 10px; }
+    #injuredToggle, #totalsToggle { padding: 6px 10px; }
+
+    /* The panels drop out of absolute positioning and stack in normal flow,
+       so they cannot overlap each other however tall their contents get. */
+    #dock {
+      display: flex; flex-direction: column-reverse; gap: 6px;
+      position: fixed; left: 6px; right: 6px; z-index: 20;
+      bottom: calc(6px + env(safe-area-inset-bottom));
+      pointer-events: none;
+    }
+    #dock > * {
+      position: static; pointer-events: auto;
+      min-width: 0; max-width: none; width: auto;
+    }
+    #info, body.sport-mlb #info { max-height: 50vh; }
+    #leaders { max-height: 45vh; }
+    #detail .recent-list { max-height: 30vh; }
+    #status { font-size: 11px; padding: 6px 10px; }
+
+    /* Touch targets: the 22px header buttons are below the 44px minimum. */
+    .panel-btn { width: 30px; height: 30px; font-size: 16px; }
+    .info-icon { width: 18px; height: 18px; font-size: 11px; }
+  }
 </style>
 </head>
 <body>
@@ -239,6 +275,7 @@
   </div>
 </div>
 
+<div id="dock">
 <div id="info" class="panel">
   <div class="panel-header">
     <h1 id="cubeTitle">BoxScorigami</h1>
@@ -323,6 +360,7 @@
   </div>
   <div class="hint" id="lbHint">Most Unique Stat Lines</div>
   <div id="lbList"></div>
+</div>
 </div>
 
 <div id="status">loading...</div>
@@ -458,7 +496,10 @@ function makeLabel(text, color = '#e6e8eb', heightUnits = 14) {
 
 const canvas = document.getElementById('canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+// Phones report DPR 3; rendering the cube at 3x costs ~2.25x the fragments of
+// 2x for no visible gain and tanks the framerate.
+const IS_MOBILE = window.matchMedia('(max-width: 760px)').matches;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 2 : 3));
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 const scene = new THREE.Scene();
@@ -1508,13 +1549,16 @@ async function getDump() {
   statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
-  const bytes = await r.arrayBuffer();
   let d;
-  try {
-    const stream = new Response(bytes).body.pipeThrough(new DecompressionStream('gzip'));
-    d = JSON.parse(await new Response(stream).text());
-  } catch (e) {
-    d = JSON.parse(new TextDecoder().decode(bytes));
+  if ((r.headers.get('content-type') || '').includes('json')) {
+    // Server declared Content-Encoding: gzip, so the transfer is already
+    // inflated. r.json() parses off the stream with no giant JS string.
+    d = await r.json();
+  } else {
+    // Opaque .gz (file:// or a server without the header rule): inflate here,
+    // still streaming rather than buffering the whole file first.
+    const stream = r.body.pipeThrough(new DecompressionStream('gzip'));
+    d = await new Response(stream).json();
   }
   DUMP_CACHE[key] = d;
   return d;
@@ -1813,6 +1857,14 @@ document.querySelectorAll('#coarseToggle button').forEach(b => {
     renderCube(true);
   });
 });
+
+// The controls panel is taller than a phone screen, so start it collapsed and
+// let the header button expand it — otherwise it buries the cube.
+if (IS_MOBILE) {
+  document.getElementById('info').classList.add('minimized');
+  const b = document.querySelector('.panel-btn[data-target="info"]');
+  b.textContent = '+'; b.title = 'expand';
+}
 
 (async () => {
   const m = /sport=(\w+)/.exec(location.hash);
