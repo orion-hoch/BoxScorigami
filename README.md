@@ -64,6 +64,10 @@ node dump_to_binary.js public/nhl/*/*.json.br && rm public/nhl/*/*.json.br
 
 `public/` is the whole deployed site. Railway builds the Dockerfile and Caddy serves it. To run it locally use `SITE_ROOT=public caddy run --config Caddyfile`, since the dumps need the `Content-Encoding: br` header and a plain `http.server` won't set it.
 
+## GenAI
+
+The NFL data was the wall this project hit. Every other league has some kind of API; for historical NFL box scores there is nothing, and I spent a while looking. The way through was scraping Pro Football Reference, and I used GenAI to get a working scraper built: figuring out how to get past Cloudflare (launch a real Chrome once for the clearance cookie, then replay it with `curl_cffi` impersonating Chrome so the crawl never needs a browser), staying under the 20 requests/minute limit, and parsing the box score tables out of PFR's comment-wrapped HTML. It also pushed the design of caching every fetched page gzipped in SQLite, so adding a new stat later is a reparse over cached HTML instead of a second crawl of the whole site.
+
 ## Layout
 
 ```
