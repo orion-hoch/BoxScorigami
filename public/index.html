@@ -639,28 +639,23 @@ function repBetter(c, cur) {
 
 function coarsenData(data, k) {
   if (!data || k <= 1) return data;
-  const seasonMode = MODE === 'season';
   const bins = new Map();
   for (const c of data.cells) {
     const bp = Math.floor(c.p / k), br = Math.floor(c.r / k), ba = Math.floor(c.a / k);
     const key = `${bp},${br},${ba}`;
     let b = bins.get(key);
-    if (!b) { b = { p: bp, r: br, a: ba, n: 0, rep: null, occ: [] }; bins.set(key, b); }
+    if (!b) { b = { p: bp, r: br, a: ba, n: 0, rep: null }; bins.set(key, b); }
     b.n += c.n;
     if (repBetter(c, b.rep)) b.rep = c;
-    if (Array.isArray(c.recent)) { for (const e of c.recent) b.occ.push(e); }
-    else b.occ.push({ pl: c.pl, d: c.d, t: c.t, m: c.m, g: c.g, pid: c.pid, w: c.w });
   }
-  const cmp = seasonMode
-    ? (a, e) => (a.d < e.d ? 1 : a.d > e.d ? -1 : 0) || (a.pl < e.pl ? -1 : a.pl > e.pl ? 1 : 0)
-    : (a, e) => (a.d < e.d ? 1 : a.d > e.d ? -1 : 0) || (Number(e.g || 0) - Number(a.g || 0));
   const cells = [];
   for (const b of bins.values()) {
     const r = b.rep;
-    const recent = b.occ.sort(cmp).slice(0, 5);
+    // Recents are rebuilt lazily on click (computeRecents matches on the
+    // coarsened block), so no per-bin recent list is assembled here.
     cells.push({ p: b.p, r: b.r, a: b.a, n: b.n,
                  d: r.d, pl: r.pl, t: r.t, m: r.m, g: r.g, gp: r.gp, pid: r.pid,
-                 sp: r.p, sr: r.r, sa: r.a, recent });
+                 sp: r.p, sr: r.r, sa: r.a });
   }
   const scaleAxis = (ax) => ({ ...ax, max: Math.floor(ax.max / k) });
   return {
@@ -981,6 +976,10 @@ function fmtAxis(c) {
   return `${fmtStat(a.x.key, c.p)} ${a.x.label.toLowerCase()} · ${fmtStat(a.y.key, c.r)} ${a.y.label.toLowerCase()} · ${fmtStat(a.z.key, c.a)} ${a.z.label.toLowerCase()}`;
 }
 
+// Bumped on every detail open so a pending async recent-fill knows if the user
+// has since clicked a different cell (or an enclosed cell) and bails.
+let detailToken = 0;
+
 function showDetailForCell(c) {
   detailEl.style.display = 'block';
   const url = boxscoreUrl(c);
@@ -1012,24 +1011,46 @@ function showDetailForCell(c) {
     ${(c.w === 1 || c.w === 0) ? `<div class="row"><span class="k">Decision</span><span class="v">${c.w === 1 ? 'Won' : 'Lost'}</span></div>` : ''}
     <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
-  const hasRecent = SPORT !== 'mlb' && Array.isArray(c.recent) && c.recent.length >= 1;
-  const recentBox = hasRecent ? `
-    <div class="recent-box">
-      <div class="recent-header">
-        <span class="rt">${seasonMode ? 'Recent Seasons' : 'Recent Games'} (${c.recent.length})</span>
-        <button class="panel-btn" id="recentToggle" title="expand">+</button>
-      </div>
-      <div id="recentList" class="recent-list" style="display:none">${recentRows(c.recent, seasonMode)}</div>
-    </div>
-  ` : '';
+  const myToken = ++detailToken;
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis(c)}</div>
     <div class="row"><span class="k">Tally</span><span class="v">${c.n.toLocaleString()}</span></div>
     ${detailRows}
-    ${recentBox}
+    <div id="recentSlot"></div>
   `;
+  // Boxscorigamis (n===1) have no recents -- their one game is the header. For
+  // repeated statlines, fill the recent box just after the panel paints so the
+  // click is instant, then cache it on the cell so re-opening is free and the
+  // list is already there when the user expands it.
+  if (SPORT !== 'mlb' && c.n >= 2) {
+    const fill = () => {
+      if (myToken !== detailToken) return;   // a later click owns the panel now
+      if (!c._recent) c._recent = computeRecents(c);
+      const slot = document.getElementById('recentSlot');
+      if (!slot || c._recent.length < 1) return;
+      slot.innerHTML = renderRecentBox(c._recent, seasonMode);
+      wireRecentToggle();
+    };
+    if (c._recent) fill();               // cached -> instant, no reflow delay
+    else setTimeout(fill, 0);            // off the click frame
+  }
+}
+
+function renderRecentBox(recent, seasonMode) {
+  return `
+    <div class="recent-box">
+      <div class="recent-header">
+        <span class="rt">${seasonMode ? 'Recent Seasons' : 'Recent Games'} (${recent.length})</span>
+        <button class="panel-btn" id="recentToggle" title="expand">+</button>
+      </div>
+      <div id="recentList" class="recent-list" style="display:none">${recentRows(recent, seasonMode)}</div>
+    </div>`;
+}
+
+function wireRecentToggle() {
   const rt = document.getElementById('recentToggle');
-  if (rt) rt.addEventListener('click', () => {
+  if (!rt) return;
+  rt.addEventListener('click', () => {
     const list = document.getElementById('recentList');
     const open = list.style.display === 'none';
     list.style.display = open ? 'block' : 'none';
@@ -1049,6 +1070,7 @@ function recentRows(recent, seasonMode) {
 }
 function showDetailForEnclosed(p, r, a) {
   detailEl.style.display = 'block';
+  ++detailToken;   // cancel any pending recent-fill from a prior cell click
   const occ = state.occupied;
   const neighborRows = NEIGHBOR_OFFSETS_6.map(([dp, dr, da]) => {
     const c = occ.get(`${p + dp},${r + dr},${a + da}`);
@@ -1501,6 +1523,9 @@ const QUALIFIER_TIP = 'Min 150 PA / 50 IP — keeps rate stats off tiny samples'
 // NFL ships both season rollups; the rest only have per-game averages.
 let SEASON_TOTALS = true;
 const HAS_SEASON_AVG = new Set(['nfl']);
+// Sports whose dumps are the columnar binary format (*.bin.br) rather than
+// brotli-JSON (decoded via typed-array views, no JSON.parse).
+const USES_BINARY = new Set(['nba', 'wnba', 'nfl', 'mlb']);
 const STATS_META = {};
 
 let POSITION = 'all';
@@ -1533,11 +1558,135 @@ function wlFilterValue() {
   return -1;
 }
 
+// Occurrence comparators (most-recent first). Shared with computeRecents so the
+// lazily-rebuilt recent list orders exactly like the old eager one did.
+const cmpGame = (a, b) =>
+  (a[5] < b[5] ? 1 : a[5] > b[5] ? -1 : 0) ||
+  (Number(b[4] || 0) - Number(a[4] || 0)) || (b[0] - a[0]);
+const cmpSeason = (a, b) =>
+  (a[2] < b[2] ? 1 : a[2] > b[2] ? -1 : 0) ||
+  (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) || (a[0] - b[0]);
+
+// ---- Columnar binary dumps (NBA) ---------------------------------------
+// getDump decodes *.bin.br into typed-array columns (see decodeBinary) instead
+// of a JSON array of line objects, skipping the ~800ms JSON.parse. rollupCube
+// and computeRecents read those columns directly via the helpers below; every
+// downstream cell has the identical shape the JSON path produces.
+const _CTORD = { i8: Int8Array, i16: Int16Array, u16: Uint16Array, i32: Int32Array, u32: Uint32Array };
+function decodeBinary(buf) {
+  const u8 = new Uint8Array(buf), dv = new DataView(buf);
+  if (String.fromCharCode(u8[0], u8[1], u8[2], u8[3]) !== 'NBB1') throw new Error('bad dump magic');
+  const headerLen = dv.getUint32(4, true);
+  const header = JSON.parse(new TextDecoder().decode(u8.subarray(8, 8 + headerLen)));
+  const bodyOffset = (8 + headerLen + 7) & ~7;   // align(8+headerLen, 8)
+  const L = header.layout;
+  const view = (name) => new _CTORD[L[name].type](buf, bodyOffset + L[name].off, L[name].len);
+  const dump = {
+    columnar: true, mode: header.mode, axes: header.axes, N: header.N, nAxes: header.nAxes,
+    vNull: header.vNull, dict: header.dict,
+    v: view('v'), n: view('n'), recOff: view('recOff'),
+    q: null, w: null, qb: null, qp: null,
+  };
+  for (const f of header.flags || []) dump[f] = view(f);   // q / w / qb / qp
+  for (const [name] of header.cols) dump[name] = view(name);
+  return dump;
+}
+
+// Compare two occurrences by flat recent-index, resolving dict values so the
+// ordering is byte-identical to cmpGame/cmpSeason on the JSON occ arrays.
+function cmpOcc(d, j, k, game) {
+  const D = d.dict;
+  if (game) {
+    const aD = D.date[d.date[j]], bD = D.date[d.date[k]];
+    return (aD < bD ? 1 : aD > bD ? -1 : 0)
+      || (Number(D.gameid[d.gameid[k]] || 0) - Number(D.gameid[d.gameid[j]] || 0))
+      || (D.pid[d.pid[k]] - D.pid[d.pid[j]]);
+  }
+  const aS = D.season[d.season[j]], bS = D.season[d.season[k]];
+  const aN = D.name[d.name[j]], bN = D.name[d.name[k]];
+  return (aS < bS ? 1 : aS > bS ? -1 : 0)
+    || (aN < bN ? -1 : aN > bN ? 1 : 0)
+    || (D.pid[d.pid[j]] - D.pid[d.pid[k]]);
+}
+function occToRecent(d, j, game) {
+  const D = d.dict;
+  return game
+    ? { pl: D.name[d.name[j]], d: D.date[d.date[j]], t: D.team[d.team[j]], m: D.matchup[d.matchup[j]],
+        g: D.gameid[d.gameid[j]], pid: D.pid[d.pid[j]], w: d.wl[j] === -1 ? null : d.wl[j] }
+    : { pl: D.name[d.name[j]], d: D.season[d.season[j]], gp: d.gp[j], pid: D.pid[d.pid[j]] };
+}
+function cellFromRep(d, c, game) {
+  const D = d.dict, j = c.ti;
+  return game
+    ? { p: c.p, r: c.r, a: c.a, n: c.n, d: D.date[d.date[j]], pl: D.name[d.name[j]], t: D.team[d.team[j]],
+        m: D.matchup[d.matchup[j]], g: D.gameid[d.gameid[j]], pid: D.pid[d.pid[j]], w: d.wl[j] === -1 ? null : d.wl[j] }
+    : { p: c.p, r: c.r, a: c.a, n: c.n, d: D.season[d.season[j]], pl: D.name[d.name[j]], t: null,
+        m: D.season[d.season[j]] + ' season', g: null, gp: d.gp[j], pid: D.pid[d.pid[j]] };
+}
+
+// A line passes the same filters the JSON path applies, using the encoded
+// flags. Missing-flag semantics match JSON exactly (undefined !== 1 -> skip,
+// !undefined -> true), so a filter with no backing column drops every line.
+function lineKept(d, i, wlFilter, qual, minGames) {
+  if (wlFilter != null && (!d.w || d.w[i] !== wlFilter)) return false;
+  if (qual && ((qual.bat && (!d.qb || !d.qb[i])) || (qual.pit && (!d.qp || !d.qp[i])))) return false;
+  if (minGames && (!d.q || d.q[i] !== 1)) return false;
+  return true;
+}
+
+function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames) {
+  const { axes, v, n, nAxes, N, recOff, vNull } = dump;
+  const ix = axes.indexOf(x), iy = axes.indexOf(y), iz = axes.indexOf(z);
+  if (ix < 0 || iy < 0 || iz < 0)   // unknown axis -> no cells (matches JSON path)
+    return { axes: { x: { max: 0 }, y: { max: 0 }, z: { max: 0 } }, cells: [] };
+  const game = dump.mode === 'game';
+  const dz0 = x === 'p_np', dz1 = y === 'p_np', dz2 = z === 'p_np';
+  const cells = new Map();
+  for (let i = 0; i < N; i++) {
+    if (!lineKept(dump, i, wlFilter, qual, minGames)) continue;
+    const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
+    if (vx === vNull || vy === vNull || vz === vNull) continue;
+    if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
+    const key = vx + ',' + vy + ',' + vz;
+    let c = cells.get(key);
+    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, ti: -1 }; cells.set(key, c); }
+    c.n += n[i];
+    for (let j = recOff[i], e = recOff[i + 1]; j < e; j++) {
+      if (c.ti < 0 || cmpOcc(dump, j, c.ti, game) < 0) c.ti = j;
+    }
+  }
+  const out = [];
+  for (const c of cells.values()) out.push(cellFromRep(dump, c, game));
+  state.recentCtx = { columnar: true, dump, ix, iy, iz, game, wlFilter, qual, minGames, dz0, dz1, dz2 };
+  const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
+  const my = out.reduce((m, c) => Math.max(m, c.r), 0);
+  const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
+  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out };
+}
+
+function computeRecentsColumnar(cell) {
+  const ctx = state.recentCtx, { dump, ix, iy, iz, game, wlFilter, qual, minGames, dz0, dz1, dz2 } = ctx;
+  const { v, nAxes, N, recOff, vNull } = dump, k = COARSE;
+  const occ = [];
+  for (let i = 0; i < N; i++) {
+    if (!lineKept(dump, i, wlFilter, qual, minGames)) continue;
+    const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
+    if (vx === vNull || vy === vNull || vz === vNull) continue;
+    if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
+    if (Math.floor(vx / k) !== cell.p || Math.floor(vy / k) !== cell.r || Math.floor(vz / k) !== cell.a) continue;
+    for (let j = recOff[i], e = recOff[i + 1]; j < e; j++) occ.push(j);
+  }
+  occ.sort((j, l) => cmpOcc(dump, j, l, game));
+  return occ.slice(0, 5).map(j => occToRecent(dump, j, game));
+}
+
 function rollupCube(dump, x, y, z, wlFilter, qual, minGames) {
+  if (dump.columnar) return rollupColumnar(dump, x, y, z, wlFilter, qual, minGames);
   const idx = {}; dump.axes.forEach((k, i) => idx[k] = i);
   const ix = idx[x], iy = idx[y], iz = idx[z];
   const game = dump.mode === 'game';
   const dz0 = x === 'p_np', dz1 = y === 'p_np', dz2 = z === 'p_np';
+  const cmp = game ? cmpGame : cmpSeason;
   const cells = new Map();
   for (const ln of dump.lines) {
     if (wlFilter != null && ln.w !== wlFilter) continue;
@@ -1548,39 +1697,57 @@ function rollupCube(dump, x, y, z, wlFilter, qual, minGames) {
     if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
     const key = vx + ',' + vy + ',' + vz;
     let c = cells.get(key);
-    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, occ: [] }; cells.set(key, c); }
+    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, top: null }; cells.set(key, c); }
     c.n += ln.n;
-    for (const o of ln.r) c.occ.push(o);
+    // Keep only the representative (most-recent) occurrence in one pass. The
+    // full top-5 recent list is rebuilt lazily on click (computeRecents) -- it
+    // was ~73% of this function's cost and is only shown for one clicked cell,
+    // never for a boxscorigami (n===1, whose lone game IS the representative).
+    for (const o of ln.r) { if (c.top === null || cmp(o, c.top) < 0) c.top = o; }
   }
-  const cmpGame = (a, b) =>
-    (a[5] < b[5] ? 1 : a[5] > b[5] ? -1 : 0) ||
-    (Number(b[4] || 0) - Number(a[4] || 0)) || (b[0] - a[0]);
-  const cmpSeason = (a, b) =>
-    (a[2] < b[2] ? 1 : a[2] > b[2] ? -1 : 0) ||
-    (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) || (a[0] - b[0]);
   const out = [];
   for (const c of cells.values()) {
-    const recents = c.occ.slice().sort(game ? cmpGame : cmpSeason).slice(0, 5);
-    const top = recents[0];
-    let cell;
-    // A unique statline is its own recent list -- the box would just repeat the
-    // row above it, so leave `recent` off entirely (same rule as stats.py).
-    if (game) {
-      cell = { p: c.p, r: c.r, a: c.a, n: c.n, d: top[5], pl: top[1], t: top[2],
-               m: top[3], g: top[4], pid: top[0], w: top[6] };
-      if (c.n >= 2) cell.recent = recents.map(o => ({ pl: o[1], d: o[5], t: o[2],
-               m: o[3], g: o[4], pid: o[0], w: o[6] }));
-    } else {
-      cell = { p: c.p, r: c.r, a: c.a, n: c.n, d: top[2], pl: top[1], t: null,
-               m: top[2] + ' season', g: null, gp: top[3], pid: top[0] };
-      if (c.n >= 2) cell.recent = recents.map(o => ({ pl: o[1], d: o[2], gp: o[3], pid: o[0] }));
-    }
-    out.push(cell);
+    const top = c.top;
+    out.push(game
+      ? { p: c.p, r: c.r, a: c.a, n: c.n, d: top[5], pl: top[1], t: top[2],
+          m: top[3], g: top[4], pid: top[0], w: top[6] }
+      : { p: c.p, r: c.r, a: c.a, n: c.n, d: top[2], pl: top[1], t: null,
+          m: top[2] + ' season', g: null, gp: top[3], pid: top[0] });
   }
+  // Context the lazy recent-list rebuild needs to reproduce this exact rollup.
+  state.recentCtx = { dump, ix, iy, iz, game, cmp, wlFilter, qual, minGames, dz0, dz1, dz2 };
   const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
   const my = out.reduce((m, c) => Math.max(m, c.r), 0);
   const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
   return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out };
+}
+
+// Rebuild one cell's top-5 recent occurrences on demand (click), instead of
+// precomputing them for every cell at load. Rescans the cached dump for the
+// lines that fall in this cell's (coarsened) block, applying the same filters
+// the rollup used. Never called for n===1 cells or MLB.
+function computeRecents(cell) {
+  const ctx = state.recentCtx;
+  if (!ctx) return [];
+  if (ctx.columnar) return computeRecentsColumnar(cell);
+  const { dump, ix, iy, iz, game, cmp, wlFilter, qual, minGames, dz0, dz1, dz2 } = ctx;
+  const k = COARSE;
+  const occ = [];
+  for (const ln of dump.lines) {
+    if (wlFilter != null && ln.w !== wlFilter) continue;
+    if (qual && ((qual.bat && !ln.qb) || (qual.pit && !ln.qp))) continue;
+    if (minGames && ln.q !== 1) continue;
+    const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];
+    if (vx == null || vy == null || vz == null) continue;
+    if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
+    if (Math.floor(vx / k) !== cell.p || Math.floor(vy / k) !== cell.r
+        || Math.floor(vz / k) !== cell.a) continue;
+    for (const o of ln.r) occ.push(o);
+  }
+  const top5 = occ.sort(cmp).slice(0, 5);
+  return game
+    ? top5.map(o => ({ pl: o[1], d: o[5], t: o[2], m: o[3], g: o[4], pid: o[0], w: o[6] }))
+    : top5.map(o => ({ pl: o[1], d: o[2], gp: o[3], pid: o[0] }));
 }
 
 // MLB splits its dumps by position; the others by stat group (NFL) or not at all.
@@ -1594,14 +1761,15 @@ async function getDump() {
   const base = dumpBase();
   const key = `${base}/${mode}`;
   if (DUMP_CACHE[key]) return DUMP_CACHE[key];
-  const url = `${base}/${mode}.json.br`;
+  // NBA ships the columnar binary format (decoded via typed-array views, no
+  // JSON.parse); every other sport is still brotli-JSON. Both are Content-
+  // Encoding: br, inflated natively by the browser.
+  const bin = USES_BINARY.has(SPORT);
+  const url = `${base}/${mode}.${bin ? 'bin' : 'json'}.br`;
   statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;
   const r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
-  // Dumps are brotli on disk; the server sets Content-Encoding: br so the
-  // browser inflates natively and r.json() parses straight off the stream.
-  // (There is no JS brotli decoder, so this depends on that header.)
-  const d = await r.json();
+  const d = bin ? decodeBinary(await r.arrayBuffer()) : await r.json();
   DUMP_CACHE[key] = d;
   return d;
 }
@@ -1609,6 +1777,47 @@ async function getDump() {
 // Grouped sports (NFL) keep each stat group in its own subdirectory.
 function sportBase() {
   return SPORTS[SPORT].groups ? `${SPORT}/${GROUP}` : SPORT;
+}
+
+// After the default group/position renders, quietly warm its siblings into
+// DUMP_CACHE so switching tabs is instant instead of a fresh download+parse.
+// Sequential and idle-scheduled so it never competes with interaction, cancelled
+// if the user changes sport, and skipped under Data Saver / 2G to spare mobile
+// data. Only the default 'game' mode is warmed; season loads on demand.
+let prefetchRun = 0;
+function prefetchSiblings() {
+  const token = ++prefetchRun;
+  const conn = navigator.connection;
+  if (conn && (conn.saveData || /(^|-)2g$/.test(conn.effectiveType || ''))) return;
+  const sport = SPORT, mode = 'game';
+  let bases;
+  if (sport === 'mlb') {
+    bases = [...MLB_POS_PRIMARY, ...MLB_POS_FIELD]
+      .map(([k]) => `mlb/${k}`).filter(b => b !== `mlb/${POSITION}`);
+  } else if (SPORTS[sport].groups) {
+    bases = SPORTS[sport].groups
+      .map(([k]) => `${sport}/${k}`).filter(b => b !== `${sport}/${GROUP}`);
+  } else return;
+  // The cube renders every frame (orbit damping), so the page is never truly
+  // idle -- give requestIdleCallback a timeout so it still fires between frames,
+  // and space steps out a touch so a big parse can't stack on the render loop.
+  const idle = window.requestIdleCallback
+    ? (fn => requestIdleCallback(fn, { timeout: 1200 }))
+    : (fn => setTimeout(fn, 400));
+  let i = 0;
+  const step = () => {
+    if (token !== prefetchRun || SPORT !== sport) return;   // superseded
+    if (i >= bases.length) return;
+    const key = `${bases[i++]}/${mode}`;
+    if (DUMP_CACHE[key]) return idle(step);
+    const bin = USES_BINARY.has(sport);
+    fetch(`${key}.${bin ? 'bin' : 'json'}.br`)
+      .then(r => (r.ok ? (bin ? r.arrayBuffer().then(decodeBinary) : r.json()) : null))
+      .then(d => { if (d && token === prefetchRun) DUMP_CACHE[key] = d; })
+      .catch(() => {})
+      .finally(() => idle(step));
+  };
+  idle(step);
 }
 
 async function loadStats() {
@@ -1750,6 +1959,7 @@ async function loadSportInner(sport) {
                                : grouped ? SPORTS[sport].groupDefaults[GROUP]
                                          : SPORTS[sport].defaults);
     await refresh();
+    prefetchSiblings();   // warm the other groups/positions in the background
   } catch (err) {
     statusEl.textContent = 'ERROR: ' + err.message;
     console.error(err);

@@ -14,10 +14,16 @@
 	# Advertising the encoding lets the browser inflate them natively while
 	# streaming, instead of the page decompressing in JS. `encode` above skips
 	# any response that already carries a Content-Encoding.
-	@br path *.json.br
-	header @br {
+	@jsonbr path *.json.br
+	header @jsonbr {
 		Content-Encoding br
 		Content-Type application/json
+	}
+	# NBA ships the columnar binary format; same brotli transport, binary body.
+	@binbr path *.bin.br
+	header @binbr {
+		Content-Encoding br
+		Content-Type application/octet-stream
 	}
 
 	file_server
