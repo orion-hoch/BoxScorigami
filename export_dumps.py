@@ -40,6 +40,12 @@ SPORTS = {
              "where": "game_type = 'REG'",              "min_gp": 6,
              "clamp": True,
              "season_modes": [("season", "SUM({col})"), ("season-avg", None)]},
+    # Hockey counting stats average below 3/game across all of history (max
+    # per-game season averages: 3 goals, 3 points, 7 sog) -- same mush problem
+    # as NFL, same fix: totals by default, per-game behind the toggle.
+    "nhl":  {"db": "nhl/nhl.sqlite",       "pid": "player_id",
+             "where": "game_type = 2",                  "min_gp": 20,
+             "season_modes": [("season", "SUM({col})"), ("season-avg", None)]},
 }
 
 SEASON_AGG = "CAST(ROUND(1.0 * SUM({col}) / COUNT(*)) AS INT)"
@@ -47,8 +53,11 @@ SEASON_AGG = "CAST(ROUND(1.0 * SUM({col}) / COUNT(*)) AS INT)"
 
 def build_season_avg(conn, stats, sanity, pid, where, table, dest,
                      agg=SEASON_AGG):
-    """Season rollup by player-season, one column per stat key."""
-    aggs = ", ".join(agg.format(col=s["col"]) + f" AS {k}"
+    """Season rollup by player-season, one column per stat key. A stat can
+    carry its own "season_agg" SQL template (e.g. a rate recomputed from
+    summed components, where neither SUM nor an average of per-game values
+    is correct) which then applies in every season mode."""
+    aggs = ", ".join((s.get("season_agg") or agg).format(col=s["col"]) + f" AS {k}"
                      for k, s in stats.items())
     conn.execute(f"DROP TABLE IF EXISTS {dest}")
     conn.execute(f"""

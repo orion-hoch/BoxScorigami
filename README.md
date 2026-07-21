@@ -1,63 +1,77 @@
 # BoxScorigami
 
-Interactive 3D visualization of player-game stat lines across the NBA, NFL,
-MLB, and WNBA. Pick any 3 stats for the X/Y/Z axes, rotate, peel layers, and click a
-voxel to see the most recent game (or player-season) that produced that exact
-line, plus a leaderboard of who owns the most unique combos.
+Scorigami, but for box scores. Pick any three stats (points/rebounds/assists, sacks/tackles/interceptions, goals/assists/shots) and every player game in league history becomes a voxel in a 3D grid. Red cells happened exactly once, green cells happened more than once. You can peel the cube open, filter by year or player, and click any cell to see who did it last. Covers the NBA, WNBA, NFL, MLB, and NHL back to each league's first season.
 
-The deployed site is a fully static bundle in `public/` — no backend at
-runtime. Each sport ships one gzipped dump per mode holding every distinct stat
-line once; the viewer fetches `public/<sport>/{game,season}.json.gz` and rolls
-the three chosen axes up in the browser.
+## Where the data comes from
 
-Earlier versions precomputed a JSON file per axis combination. That wrote each
-line into all C(n-1,2) files it belonged to — 91 copies per line for NBA's 15
-stats — turning a 255 MB database into ~1 GB of JSON. The dump format stores
-each line once and is ~20x smaller in total.
+No API will give you every player box score ever. What exists is a patchwork. Some leagues have decent free endpoints with awkward limits, some have nothing at all. So each sport gets its own collector that pulls or scrapes into a local SQLite database, and everything downstream of that is uniform.
 
-## Repo layout
+| League | Source | Approach |
+|---|---|---|
+| NBA / WNBA | stats.nba.com (`nba_api`) | one game log request per season |
+| NFL | Pro Football Reference | scraped, one page per game, HTML cached |
+| MLB | MLB StatsAPI | bulk gameLog, 100 players per request |
+| NHL | NHL stats API | whole season report queries, sliced by month |
 
-```
-NBA_Cube/
-├── public/                 # deploy target — unified static site (Vercel serves this)
-│   ├── index.html          #   the tabbed 3D viewer (NBA / NFL / MLB)
-│   ├── boxscorigami.svg
-│   ├── nba/                #   stats.json, game.json.gz, season.json.gz
-│   ├── nfl/                #   off/ def/ st/, each with the same three files
-│   ├── mlb/                #   one dir per position (all, p, pos, c, 1b, ...)
-│   └── wnba/               #   "
-├── nba/                    # NBA pipeline (nba_api)
-│   ├── collect.py          #   fetch player_games -> nba.sqlite (--league wnba for WNBA)
-│   ├── server.py           #   local dev JSON API (optional)
-│   └── nba.sqlite          #   gitignored
-├── nfl/                    # NFL pipeline -> nfl_full.sqlite, public/nfl/
-│   ├── collect.py          #   scrape Pro-Football-Reference -> nfl_full.sqlite
-│   └── server.py           #   ATTACHes nfl_full.sqlite for the full history
-├── mlb/                    # MLB pipeline (MLB-StatsAPI) -> mlb.sqlite, public/mlb/
-├── export_dumps.py         # generate public/<sport>/*.json.gz (--sport nba|nfl|wnba)
-├── stats.py                # shared query layer + dev server used by each sport
-└── .gitignore
-```
+The one that is particularly difficult:
 
-Each sport follows the same shape: `collect.py` scrapes into a SQLite db, then
-an exporter emits the dumps into `public/<sport>/`. NBA/NFL/WNBA use
-`export_dumps.py`; MLB emits its own via `python3 mlb/collect.py build`, split by
-position. SQLite files are gitignored (too big — regenerate from collect.py).
+**NFL.** No public API covers historical box scores, so they get scraped from Pro Football Reference, which sits behind Cloudflare and limits you to 20 requests a minute. The collector launches a real Chrome once to pass the challenge, lifts the clearance cookie, and replays it over plain HTTP with `curl_cffi` impersonating Chrome, so the crawl itself never needs a browser. Every page it fetches gets gzipped into the database. When a new stat table becomes worth parsing later, that is a `reparse` over cached HTML instead of scraping the whole site again.
 
-## Local dev (per sport, e.g. nba)
+
+## Static site choice (I am poor and didn't want to store GBs of data offsite)
+
+The first version precomputed a JSON file per axis combination. Each stat line belongs to C(n-1,2) combos, which is 91 files for NBA's 15 stats, so a 255 MB database exploded into about 1 GB of duplicated JSON.
+
+The replacement stores every distinct stat line exactly once, with its count and its five most recent occurrences, and lets the browser do the grouping. Choosing axes is a single pass over the dump: bucket by the three chosen values, sum the counts. That is cheap enough to rerun on every dropdown change with no server involved.
+
+The dump itself is a custom columnar binary. Stat values live in one flat Int16Array, counts in another, and strings like names and dates are dictionary encoded into index columns. The client never runs JSON.parse, which for NBA alone took around 800ms. It points typed array views straight into the fetched buffer. Files are brotli compressed on disk and served with `Content-Encoding: br`, so the browser inflates them natively while streaming. The biggest sport is a 15 MB download that unpacks into a few flat arrays, and the whole site is flat files behind Caddy. No backend, no database, nothing to keep alive.
+
+Some of the features fall straight out of that layout:
+
+- **Recent games.** The five most recent occurrences ride along with every line. Assembling the recent list for every cell during rollup turned out to be about 73% of its cost, for lists nobody sees until they click a cell. So the rollup keeps only the single most recent occurrence per cell, and the full list is rebuilt on click by rescanning the dump for that one cell, then cached.
+- **Min games toggle.** The games played qualifier is folded into each line's key, so one dump serves both states of the toggle. No second download.
+- **Instant tab switches.** Dumps are cached per sport and group, and sibling groups (MLB positions, NFL and NHL units) prefetch during idle frames after the first cube renders.
+
+## Getting the data yourself
+
+Every collector is resumable and checkpointed, so you can rebuild any of them from scratch:
 
 ```
-# 1. (one-time) Scrape into SQLite
+# NBA and WNBA
 python3 nba/collect.py
+python3 nba/collect.py --league wnba
 
-# 2. (whenever the db changes) Generate the dumps
-python3 export_dumps.py --sport nba
-# MLB instead: python3 mlb/collect.py build
+# NFL (needs Chrome once for the Cloudflare cookie)
+python3 nfl/collect.py enumerate
+python3 nfl/collect.py scrape
 
-# 3. Serve the unified site from the repo root
-python3 -m http.server --directory public 8000
-# -> http://127.0.0.1:8000/
+# MLB (one season-batch per season, then the backfills)
+python3 mlb/collect.py season-batch --season 2024
+python3 mlb/collect.py backfill-names
+python3 mlb/collect.py backfill-positions
+
+# NHL
+python3 nhl/collect.py enumerate
+python3 nhl/collect.py season-batch
 ```
 
-The per-sport `server.py` scripts query the db live and are handy for spot
-checks, but the deployed viewer reads only the dumps.
+Then regenerate the dumps for whatever changed:
+
+```
+python3 export_dumps.py --sport nhl          # MLB instead: python3 mlb/collect.py build
+node dump_to_binary.js public/nhl/*/*.json.br && rm public/nhl/*/*.json.br
+```
+
+`public/` is the whole deployed site. Railway builds the Dockerfile and Caddy serves it. To run it locally use `SITE_ROOT=public caddy run --config Caddyfile`, since the dumps need the `Content-Encoding: br` header and a plain `http.server` won't set it.
+
+## Layout
+
+```
+├── public/            # the deployed static site: index.html plus per sport dumps
+├── nba/  nfl/  mlb/  nhl/  wnba/
+│   ├── collect.py     # league specific collection (see above)
+│   └── server.py      # stat definitions, sanity filters, era cutoffs, dev API
+├── export_dumps.py    # turns SQLite into the dump files (all sports but MLB)
+├── dump_to_binary.js  # turns brotli JSON dumps into the columnar binary
+└── stats.py           # shared query layer for the per sport dev servers
+```

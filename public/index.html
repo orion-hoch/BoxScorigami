@@ -20,10 +20,6 @@
   }
   #info { top: 12px; left: 12px; min-width: 280px; max-width: 340px;
     max-height: calc(100vh - 24px); overflow-y: auto; overflow-x: hidden; }
-  /* MLB adds position + W/L rows; widen so they fit on fewer lines, and stop
-     short of the BBox status box in the bottom-left corner. */
-  body.sport-mlb #info { min-width: 340px; max-width: 420px;
-    max-height: calc(100vh - 72px); }
   #detail { top: 54px; right: 12px; min-width: 260px; max-width: 320px; display: none; }
   /* Leaderboard sits on top, the "Made by · BBox" line beneath it, as one
      bottom-right stack (column-reverse over the status/leaders DOM order).
@@ -64,7 +60,8 @@
   #coarseToggle button.active { background: #2a2f36; color: #f7c948; border-color: #f7c948; }
   #coarseToggle .hi-k { display: none; }
   body.sport-mlb #coarseToggle .hi-k,
-  body.sport-nfl #coarseToggle .hi-k { display: block; }
+  body.sport-nfl #coarseToggle .hi-k,
+  body.sport-nhl #coarseToggle .hi-k { display: block; }
   #axisGrid {
     display: grid; grid-template-columns: 24px 1fr; gap: 5px 8px; align-items: center;
     margin-top: 6px; padding: 6px 9px;
@@ -282,6 +279,7 @@
   <button data-sport="wnba">WNBA</button>
   <button data-sport="nfl">NFL</button>
   <button data-sport="mlb">MLB</button>
+  <button data-sport="nhl">NHL</button>
 </div>
 <div id="topRightControls">
   <button id="totalsToggle">Season: Totals</button>
@@ -986,6 +984,7 @@ function showDetailForCell(c) {
   const linkLabel =
     SPORT === 'nfl' ? 'pro-football-reference' :
     SPORT === 'mlb' ? 'mlb.com' :
+    SPORT === 'nhl' ? 'nhl.com' :
     'basketball-reference';
   const linkHtml = url
     ? `<a href="${url}" target="_blank" rel="noopener" style="color:#f7c948">${linkLabel} ↗</a>`
@@ -1433,6 +1432,15 @@ const SPORTS = {
   },
   mlb:  { label: 'MLB',  defaults: ['sb', 'rbi', 'hr'] },
   wnba: { label: 'WNBA', defaults: ['pts', 'reb', 'ast'] },
+  nhl:  {
+    label: 'NHL',
+    defaults: ['goals', 'assists', 'sog'],
+    groups: [['sk', 'Skaters'], ['g', 'Goalies']],
+    groupDefaults: {
+      sk: ['goals', 'assists', 'sog'],
+      g:  ['saves', 'goals_against', 'toi_min'],
+    },
+  },
 };
 
 const NBA_TO_BBR_TEAM = { BKN: 'BRK', CHA: 'CHO', PHX: 'PHO' };
@@ -1449,6 +1457,7 @@ function playerUrl(cell) {
   if (SPORT === 'nba') return `https://www.nba.com/player/${cell.pid}`;
   if (SPORT === 'wnba') return `https://www.wnba.com/player/${cell.pid}`;
   if (SPORT === 'mlb') return `https://www.mlb.com/player/${cell.pid}`;
+  if (SPORT === 'nhl') return `https://www.nhl.com/player/${cell.pid}`;
   if (SPORT === 'nfl') {
     const id = String(cell.pid);
     if (/^[A-Za-z]/.test(id) && !id.includes('-')) {
@@ -1510,22 +1519,26 @@ function boxscoreUrl(cell) {
   if (SPORT === 'mlb') {
     return cell.g ? `https://www.mlb.com/gameday/${cell.g}/final/box` : null;
   }
+  if (SPORT === 'nhl') {
+    return cell.g ? `https://www.nhl.com/gamecenter/${cell.g}` : null;
+  }
   return null;
 }
 let SPORT = null;  // set by the first loadSport(), which also guards re-clicks
 let MODE = 'game';
 let MIN_GAMES = true;
-const HAS_MIN_GAMES = new Set(['nba', 'nfl', 'wnba']);
+const HAS_MIN_GAMES = new Set(['nba', 'nfl', 'wnba', 'nhl']);
 // MLB uses the same top-button slot for a playing-time qualifier instead.
 let QUALIFIED = true;
 const HAS_QUALIFIER = new Set(['mlb']);
 const QUALIFIER_TIP = 'Min 150 PA / 50 IP — keeps rate stats off tiny samples';
-// NFL ships both season rollups; the rest only have per-game averages.
+// NFL and NHL ship both season rollups (their per-game counts round to mush);
+// NBA/WNBA only have per-game averages, MLB only totals — per-sport convention.
 let SEASON_TOTALS = true;
-const HAS_SEASON_AVG = new Set(['nfl']);
+const HAS_SEASON_AVG = new Set(['nfl', 'nhl']);
 // Sports whose dumps are the columnar binary format (*.bin.br) rather than
 // brotli-JSON (decoded via typed-array views, no JSON.parse).
-const USES_BINARY = new Set(['nba', 'wnba', 'nfl', 'mlb']);
+const USES_BINARY = new Set(['nba', 'wnba', 'nfl', 'mlb', 'nhl']);
 const STATS_META = {};
 
 let POSITION = 'all';
@@ -1761,9 +1774,10 @@ async function getDump() {
   const base = dumpBase();
   const key = `${base}/${mode}`;
   if (DUMP_CACHE[key]) return DUMP_CACHE[key];
-  // NBA ships the columnar binary format (decoded via typed-array views, no
-  // JSON.parse); every other sport is still brotli-JSON. Both are Content-
-  // Encoding: br, inflated natively by the browser.
+  // Every sport ships the columnar binary format (decoded via typed-array
+  // views, no JSON.parse), served with Content-Encoding: br so the browser
+  // inflates it natively. USES_BINARY stays as the switch for local dev
+  // against fresh brotli-JSON dumps that haven't been transcoded yet.
   const bin = USES_BINARY.has(SPORT);
   const url = `${base}/${mode}.${bin ? 'bin' : 'json'}.br`;
   statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;

@@ -1,6 +1,6 @@
 // Transcode brotli-JSON dumps (*.json.br) to the columnar binary format
 // (*.bin.br) the client decodes with typed-array views instead of JSON.parse.
-// Currently used for NBA (see USES_BINARY in public/index.html).
+// Used for every sport (see USES_BINARY in public/index.html).
 //
 //   node dump_to_binary.js public/nba/game.json.br public/nba/season.json.br
 //

@@ -7,7 +7,9 @@
 }
 
 :{$PORT:8080} {
-	root * /srv
+	# /srv in the container; override for local dev:
+	#   SITE_ROOT=public caddy run --config Caddyfile
+	root * {$SITE_ROOT:/srv}
 	encode gzip zstd
 
 	# The dumps are pre-compressed with brotli on disk (~40% smaller than gzip).

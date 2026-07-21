@@ -1,13 +1,13 @@
 """Collect MLB player-game stats into mlb.sqlite and build the cube dumps."""
 import argparse
 import datetime as dt
-import gzip
 import json
 import sqlite3
 import sys
 import time
 from pathlib import Path
 
+import brotli
 import requests
 
 DB_PATH = Path(__file__).resolve().parent / "mlb.sqlite"
@@ -789,9 +789,12 @@ def emit_dump(conn, poskey, mode):
         json.dumps(stats_json(defs), separators=(",", ":")))
     payload = json.dumps({"mode": mode, "axes": keys, "lines": lines}, separators=(",", ":"))
     stem = "game" if mode == "game" else "season"
-    (base / f"{stem}.json").unlink(missing_ok=True)
-    with gzip.open(base / f"{stem}.json.gz", "wt", encoding="utf-8") as fh:
-        fh.write(payload)
+    for legacy in (f"{stem}.json", f"{stem}.json.gz"):
+        (base / legacy).unlink(missing_ok=True)
+    # Brotli like every other sport, so dump_to_binary.js can transcode it:
+    #   node dump_to_binary.js public/mlb/*/{game,season}.json.br
+    (base / f"{stem}.json.br").write_bytes(
+        brotli.compress(payload.encode("utf-8"), quality=9))
     return len(lines)
 
 
@@ -812,7 +815,7 @@ def build_cubes(conn, positions, mode, no_rebuild):
         print(f"== position '{pk}' ({POSITIONS[pk][0]}) ==")
         for m in modes:
             n = emit_dump(conn, pk, m)
-            print(f"  [{pk}/{m}] {n:,} distinct lines -> {OUT_ROOT/pk}/{'game' if m=='game' else 'season'}.json")
+            print(f"  [{pk}/{m}] {n:,} distinct lines -> {OUT_ROOT/pk}/{'game' if m=='game' else 'season'}.json.br")
     print(f"\nDONE in {(time.time()-t0)/60:.1f}m -> {OUT_ROOT}")
 
 
