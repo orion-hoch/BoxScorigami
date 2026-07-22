@@ -188,7 +188,7 @@
   #injuredToggle, #totalsToggle {
     display: none;
     background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
-    color: #8b94a0; padding: 7px 14px; font-size: 12px; font-weight: 700;
+    color: #8b94a0; padding: 5px 10px; font-size: 11px; font-weight: 700;
     cursor: pointer; letter-spacing: .04em; backdrop-filter: blur(6px);
     font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
   }
@@ -280,8 +280,8 @@
   <button data-sport="nhl">NHL</button>
 </div>
 <div id="topRightControls">
-  <button id="totalsToggle">Season: Totals</button>
-  <button id="injuredToggle">Min Games: on</button>
+  <button id="totalsToggle">Totals</button>
+  <button id="injuredToggle">Min Games</button>
   <div id="modeToggle">
     <button data-mode="game" class="active">Single Game</button>
     <button data-mode="season">Season</button>
@@ -2034,7 +2034,7 @@ function updateTotalsToggle() {
   btn.style.display =
     (MODE === 'season' && HAS_SEASON_AVG.has(SPORT)) ? 'block' : 'none';
   btn.classList.toggle('active', SEASON_TOTALS);
-  btn.textContent = `Season: ${SEASON_TOTALS ? 'Totals' : 'Per Game'}`;
+  btn.textContent = SEASON_TOTALS ? 'Totals' : 'Per Game';
 }
 
 document.getElementById('totalsToggle').addEventListener('click', () => {
@@ -2076,7 +2076,7 @@ function updateMinGamesToggle() {
   btn.classList.toggle('active', isQual ? QUALIFIED : MIN_GAMES);
   btn.textContent = isQual
     ? `Qualified: ${QUALIFIED ? 'on' : 'off'}`
-    : `Min Games: ${MIN_GAMES ? 'on' : 'off'}`;
+    : 'Min Games';
   btn.title = isQual ? QUALIFIER_TIP : '';
 }
 
@@ -2086,6 +2086,9 @@ document.querySelectorAll('#modeToggle button').forEach(b => {
     MODE = b.dataset.mode;
     document.querySelectorAll('#modeToggle button').forEach(x =>
       x.classList.toggle('active', x.dataset.mode === MODE));
+    // Season stat lines are far more granular than single games for the long
+    // MLB/NFL seasons, so default them to a coarser cube.
+    setCoarse(MODE === 'season' && (SPORT === 'mlb' || SPORT === 'nfl') ? 5 : 1);
     updateMinGamesToggle();
     if (SPORT === 'mlb') reloadMlbAxes();
     else refresh();
@@ -2099,13 +2102,17 @@ document.getElementById('injuredToggle').addEventListener('click', () => {
   refresh();
 });
 
+function setCoarse(k) {
+  COARSE = k;
+  document.querySelectorAll('#coarseToggle button').forEach(x =>
+    x.classList.toggle('active', parseInt(x.dataset.k, 10) === k));
+}
+
 document.querySelectorAll('#coarseToggle button').forEach(b => {
   b.addEventListener('click', () => {
     const k = parseInt(b.dataset.k, 10);
     if (k === COARSE) return;
-    COARSE = k;
-    document.querySelectorAll('#coarseToggle button').forEach(x =>
-      x.classList.toggle('active', parseInt(x.dataset.k, 10) === COARSE));
+    setCoarse(k);
     detailEl.style.display = 'none';
     renderCube(true);
   });
