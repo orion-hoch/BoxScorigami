@@ -10,14 +10,17 @@
 // even started loading. loadStats/getDump/fastDefaultRender claim these
 // promises via takeEarly() instead of fetching again.
 (() => {
+  // Data files are served with max-age=86400; the version param busts that
+  // cache when the dump format changes (must match DUMP_V in the module).
+  const V = '?v=2';
   const bases = { nba: 'nba', wnba: 'wnba', nhl: 'nhl/sk', nfl: 'nfl/off', mlb: 'mlb/all' };
   const m = /sport=(\w+)/.exec(location.hash);
   const base = bases[(m && bases[m[1]]) ? m[1] : 'nba'];
   const go = (url) => ({ url, p: fetch(url).catch(() => null) });
   window.__early = {
-    stats: go(`${base}/stats.json`),
-    cells: go(`${base}/default.json.br`),
-    dump:  go(`${base}/game.bin.br`),
+    stats: go(`${base}/stats.json${V}`),
+    cells: go(`${base}/default.json.br${V}`),
+    dump:  go(`${base}/game.bin.br${V}`),
   };
 })();
 </script>
@@ -169,19 +172,19 @@
     position: absolute; top: 12px; right: 12px;
     display: flex; gap: 6px; align-items: flex-start; z-index: 10;
   }
-  #modeToggle, #poToggle {
+  #modeToggle {
     display: flex; gap: 4px;
     background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
     padding: 3px; backdrop-filter: blur(6px);
   }
-  #modeToggle button, #poToggle button {
+  #modeToggle button {
     background: transparent; color: #8b94a0; border: 0;
     padding: 4px 16px; font-size: 12px; font-weight: 700;
     border-radius: 5px; cursor: pointer; letter-spacing: .04em;
     font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
   }
-  #modeToggle button:hover, #poToggle button:hover { color: #e6e8eb; }
-  #modeToggle button.active, #poToggle button.active { background: #2a2f36; color: #f7c948; }
+  #modeToggle button:hover { color: #e6e8eb; }
+  #modeToggle button.active { background: #2a2f36; color: #f7c948; }
   #injuredToggle, #totalsToggle {
     display: none;
     background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
@@ -279,10 +282,6 @@
 <div id="topRightControls">
   <button id="totalsToggle">Season: Totals</button>
   <button id="injuredToggle">Min Games: on</button>
-  <div id="poToggle" style="display:none">
-    <button data-po="reg" class="active">Regular</button>
-    <button data-po="po" class="active">Playoffs</button>
-  </div>
   <div id="modeToggle">
     <button data-mode="game" class="active">Single Game</button>
     <button data-mode="season">Season</button>
@@ -1558,6 +1557,10 @@ const HAS_SEASON_AVG = new Set(['nfl', 'nhl']);
 // Sports whose dumps are the columnar binary format (*.bin.br) rather than
 // brotli-JSON (decoded via typed-array views, no JSON.parse).
 const USES_BINARY = new Set(['nba', 'wnba', 'nfl', 'mlb', 'nhl']);
+// Cache-buster for the data files (served with max-age=86400): bump on any
+// dump format change, or a stale cached dump silently breaks new filters.
+// Must match V in the head's early-fetch script.
+const DUMP_V = '?v=2';
 const STATS_META = {};
 
 let POSITION = 'all';
@@ -1671,7 +1674,7 @@ function getDump(quiet) {
   const key = `${base}/${mode}`;
   if (!DUMP_CACHE[key]) {
     const bin = USES_BINARY.has(SPORT);
-    const url = `${base}/${mode}.${bin ? 'bin' : 'json'}.br`;
+    const url = `${base}/${mode}.${bin ? 'bin' : 'json'}.br${DUMP_V}`;
     if (!quiet) statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;
     const p = (async () => {
       let r = takeEarly('dump', url);
@@ -1724,7 +1727,7 @@ function prefetchSiblings() {
     const key = `${bases[i++]}/${mode}`;
     if (DUMP_CACHE[key]) return idle(step);
     const bin = USES_BINARY.has(sport);
-    fetch(`${key}.${bin ? 'bin' : 'json'}.br`)
+    fetch(`${key}.${bin ? 'bin' : 'json'}.br${DUMP_V}`)
       .then(r => (r.ok ? (bin ? r.arrayBuffer().then(decodeBinary) : r.json()) : null))
       .then(d => { if (d && token === prefetchRun) DUMP_CACHE[key] = d; })
       .catch(() => {})
@@ -1734,9 +1737,9 @@ function prefetchSiblings() {
 }
 
 async function loadStats() {
-  const url = (SPORT === 'mlb')
+  const url = ((SPORT === 'mlb')
     ? `mlb/${POSITION}/${MODE === 'season' ? 'stats-season' : 'stats'}.json`
-    : `${sportBase()}/stats.json`;
+    : `${sportBase()}/stats.json`) + DUMP_V;
   let r = takeEarly('stats', url);
   r = r && await r;
   if (!r) r = await fetch(url);
@@ -1778,7 +1781,7 @@ async function loadTally(x, y, z) {
 // any mismatch (missing file, non-default axes) and the slow path runs instead.
 async function fastDefaultRender() {
   const [x, y, z] = [axisXEl.value, axisYEl.value, axisZEl.value];
-  const url = `${dumpBase()}/default.json.br`;
+  const url = `${dumpBase()}/default.json.br${DUMP_V}`;
   try {
     let r = takeEarly('cells', url);
     r = r && await r;
@@ -1897,10 +1900,10 @@ async function loadSportInner(sport) {
   document.getElementById('yearTo').value = '';
   const isMlb = sport === 'mlb';
   const grouped = !!SPORTS[sport].groups;
-  document.getElementById('posBar').style.display =
-    (isMlb || grouped) ? 'flex' : 'none';
+  document.getElementById('posBar').style.display = 'flex';
   if (isMlb) { POSITION = 'all'; WL_W = WL_L = true; buildPosBar(); }
-  if (grouped) { GROUP = SPORTS[sport].groups[0][0]; buildGroupBar(); }
+  else if (grouped) { GROUP = SPORTS[sport].groups[0][0]; buildGroupBar(); }
+  else buildPoBar();
   try {
     statusEl.textContent = `loading ${SPORTS[sport].label} ...`;
     const stats = await loadStats();
@@ -1939,20 +1942,34 @@ function buildPosBar() {
       + `<button data-wl="W" class="${WL_W ? 'active' : ''}">W</button>`
       + `<button data-wl="L" class="${WL_L ? 'active' : ''}">L</button>`;
   }
+  // MLB field-position *game* dumps have no playoff rows (per-game fielding
+  // position is regular-season only); season dumps cover every position.
+  if (MODE === 'season' || MLB_FULL_POS.has(POSITION)) {
+    html += '<span class="pos-sep"></span>' + poButtonsHtml();
+  }
   bar.innerHTML = html;
   bar.querySelectorAll('button[data-pos]').forEach(b =>
     b.addEventListener('click', () => setPosition(b.dataset.pos)));
   bar.querySelectorAll('button[data-wl]').forEach(b =>
     b.addEventListener('click', () => setWl(b.dataset.wl)));
+  wirePoButtons(bar);
 }
 
 function buildGroupBar() {
   const bar = document.getElementById('posBar');
   bar.innerHTML = SPORTS[SPORT].groups.map(([k, l]) =>
     `<button data-group="${k}" class="${k === GROUP ? 'active' : ''}">${l}</button>`
-  ).join('');
+  ).join('') + '<span class="pos-sep"></span>' + poButtonsHtml();
   bar.querySelectorAll('button[data-group]').forEach(b =>
     b.addEventListener('click', () => setGroup(b.dataset.group)));
+  wirePoButtons(bar);
+}
+
+// NBA/WNBA have no positions or stat groups; their bar is just Reg/Playoffs.
+function buildPoBar() {
+  const bar = document.getElementById('posBar');
+  bar.innerHTML = poButtonsHtml();
+  wirePoButtons(bar);
 }
 
 // Keep the current axes if the new group still has all three; otherwise fall
@@ -2026,21 +2043,28 @@ document.getElementById('totalsToggle').addEventListener('click', () => {
   refresh();
 });
 
-function updatePoToggle() {
-  const wrap = document.getElementById('poToggle');
-  const show = MODE === 'season' || SPORT !== 'mlb' || MLB_FULL_POS.has(POSITION);
-  wrap.style.display = show ? 'flex' : 'none';
-  wrap.querySelector('button[data-po="reg"]').classList.toggle('active', PO_REG);
-  wrap.querySelector('button[data-po="po"]').classList.toggle('active', PO_PLAYOFF);
+// The Reg/Playoffs buttons live inside #posBar next to the position/group
+// buttons; each bar builder appends them via poButtonsHtml + wirePoButtons.
+function poButtonsHtml() {
+  return `<button data-po="reg" class="${PO_REG ? 'active' : ''}">Regular</button>`
+    + `<button data-po="po" class="${PO_PLAYOFF ? 'active' : ''}">Playoffs</button>`;
 }
 
-document.querySelectorAll('#poToggle button').forEach(b => {
-  b.addEventListener('click', () => {
-    if (b.dataset.po === 'reg') PO_REG = !PO_REG; else PO_PLAYOFF = !PO_PLAYOFF;
-    updatePoToggle();
-    refresh();
-  });
-});
+function wirePoButtons(bar) {
+  bar.querySelectorAll('button[data-po]').forEach(b =>
+    b.addEventListener('click', () => {
+      if (b.dataset.po === 'reg') PO_REG = !PO_REG; else PO_PLAYOFF = !PO_PLAYOFF;
+      updatePoToggle();
+      refresh();
+    }));
+}
+
+function updatePoToggle() {
+  const r = document.querySelector('#posBar button[data-po="reg"]');
+  const p = document.querySelector('#posBar button[data-po="po"]');
+  if (r) r.classList.toggle('active', PO_REG);
+  if (p) p.classList.toggle('active', PO_PLAYOFF);
+}
 
 function updateMinGamesToggle() {
   updateTotalsToggle();
