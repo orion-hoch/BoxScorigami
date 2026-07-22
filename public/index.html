@@ -5,6 +5,25 @@
 <!-- Fixed desktop-width layout: phones render the desktop look scaled down
      and rely on pinch zoom (page) / OrbitControls zoom (cube). -->
 <meta name="viewport" content="width=1200, viewport-fit=cover" />
+<script>
+// Kick the sport's data downloads off NOW, before the module graph below has
+// even started loading. loadStats/getDump/fastDefaultRender claim these
+// promises via takeEarly() instead of fetching again.
+(() => {
+  const bases = { nba: 'nba', wnba: 'wnba', nhl: 'nhl/sk', nfl: 'nfl/off', mlb: 'mlb/all' };
+  const m = /sport=(\w+)/.exec(location.hash);
+  const base = bases[(m && bases[m[1]]) ? m[1] : 'nba'];
+  const go = (url) => ({ url, p: fetch(url).catch(() => null) });
+  window.__early = {
+    stats: go(`${base}/stats.json`),
+    cells: go(`${base}/default.json.br`),
+    dump:  go(`${base}/game.bin.br`),
+  };
+})();
+</script>
+<link rel="modulepreload" href="vendor/three.module.min.js" />
+<link rel="modulepreload" href="vendor/controls/OrbitControls.js" />
+<link rel="modulepreload" href="rollup.js" />
 <title>BoxScorigami</title>
 <link rel="icon" type="image/svg+xml" href="boxscorigami.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -117,8 +136,8 @@
   .lbRow .ct { color: #f7c948; font-variant-numeric: tabular-nums; font-size: 12px; }
 
   #status {
-    padding: 8px 12px;
-    background: rgba(20,22,26,.8); border: 2px solid #3a4150; border-radius: 6px; font-size: 12px;
+    padding: 4px 10px;
+    background: rgba(20,22,26,.8); border: 2px solid #3a4150; border-radius: 6px; font-size: 11px;
   }
 
   #tabs {
@@ -176,12 +195,10 @@
     flex: 0 0 auto;
   }
   .panel-btn:hover { color: #f7c948; border-color: #f7c948; }
-  /* Center the leaderboard title whether minimized or expanded: equal side
-     padding keeps it true-center while the +/− button floats on the right. */
-  #leaders .panel-header { position: relative; justify-content: center; padding: 0 30px; }
-  #leaders .panel-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
   .panel.minimized > *:not(.panel-header) { display: none !important; }
-  .panel.minimized { padding-bottom: 12px; }
+  /* Minimized = header only: drop the header's bottom margin so the title
+     sits vertically centered (equal 10px panel padding above and below). */
+  .panel.minimized .panel-header { margin-bottom: 0; }
 
   .info-icon {
     display: inline-flex; align-items: center; justify-content: center;
@@ -353,8 +370,8 @@
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    "three": "./vendor/three.module.min.js",
+    "three/addons/": "./vendor/"
   }
 }
 </script>
@@ -362,6 +379,7 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { decodeBinary, rollupCube, makeRecentCtx, lineKept, cmpOcc, occToRecent } from './rollup.js';
 
 const COLOR_ONE      = new THREE.Color(0xe53935);
 const COLOR_MANY     = new THREE.Color(0x43a047);
@@ -918,11 +936,14 @@ function pickHandle(event) {
   const hits = raycaster.intersectObjects(state.handlesGroup.children, false);
   if (hits.length) return hits[0].object;
   if (event.pointerType !== 'touch') return null;
-  // Fat finger: grab the nearest handle within ~30 *visual* px of the touch.
+  // A touch square on a voxel is a cell tap, not a sloppy handle grab —
+  // without this the radius below eats every tap near a face or corner.
+  if (pick(event)) return null;
+  // Fat finger: grab the nearest handle within ~22 *visual* px of the touch.
   // Divide by the pinch-zoom scale so the grab radius stays finger-sized in
   // layout px whether the page is zoomed out to the full 1200px or way in.
   const rect = renderer.domElement.getBoundingClientRect();
-  const thr = 30 / ((window.visualViewport && window.visualViewport.scale) || 1);
+  const thr = 22 / ((window.visualViewport && window.visualViewport.scale) || 1);
   let best = null, bestD2 = thr * thr;
   for (const h of state.handlesGroup.children) {
     h.getWorldPosition(_handleScreen).project(camera);
@@ -1007,7 +1028,9 @@ function showDetailForCell(c) {
   if (SPORT !== 'mlb' && c.n >= 2) {
     const fill = () => {
       if (myToken !== detailToken) return;   // a later click owns the panel now
-      if (!c._recent) c._recent = computeRecents(c);
+      // retry empties: a click before the background dump arrives yields [],
+      // which shouldn't stick once recents become computable
+      if (!c._recent || !c._recent.length) c._recent = computeRecents(c);
       const slot = document.getElementById('recentSlot');
       if (!slot || c._recent.length < 1) return;
       slot.innerHTML = renderRecentBox(c._recent, seasonMode);
@@ -1561,111 +1584,6 @@ function wlFilterValue() {
   return -1;
 }
 
-// Occurrence comparators (most-recent first). Shared with computeRecents so the
-// lazily-rebuilt recent list orders exactly like the old eager one did.
-const cmpGame = (a, b) =>
-  (a[5] < b[5] ? 1 : a[5] > b[5] ? -1 : 0) ||
-  (Number(b[4] || 0) - Number(a[4] || 0)) || (b[0] - a[0]);
-const cmpSeason = (a, b) =>
-  (a[2] < b[2] ? 1 : a[2] > b[2] ? -1 : 0) ||
-  (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) || (a[0] - b[0]);
-
-// ---- Columnar binary dumps (NBA) ---------------------------------------
-// getDump decodes *.bin.br into typed-array columns (see decodeBinary) instead
-// of a JSON array of line objects, skipping the ~800ms JSON.parse. rollupCube
-// and computeRecents read those columns directly via the helpers below; every
-// downstream cell has the identical shape the JSON path produces.
-const _CTORD = { i8: Int8Array, i16: Int16Array, u16: Uint16Array, i32: Int32Array, u32: Uint32Array };
-function decodeBinary(buf) {
-  const u8 = new Uint8Array(buf), dv = new DataView(buf);
-  if (String.fromCharCode(u8[0], u8[1], u8[2], u8[3]) !== 'NBB1') throw new Error('bad dump magic');
-  const headerLen = dv.getUint32(4, true);
-  const header = JSON.parse(new TextDecoder().decode(u8.subarray(8, 8 + headerLen)));
-  const bodyOffset = (8 + headerLen + 7) & ~7;   // align(8+headerLen, 8)
-  const L = header.layout;
-  const view = (name) => new _CTORD[L[name].type](buf, bodyOffset + L[name].off, L[name].len);
-  const dump = {
-    columnar: true, mode: header.mode, axes: header.axes, N: header.N, nAxes: header.nAxes,
-    vNull: header.vNull, dict: header.dict,
-    v: view('v'), n: view('n'), recOff: view('recOff'),
-    q: null, w: null, qb: null, qp: null,
-  };
-  for (const f of header.flags || []) dump[f] = view(f);   // q / w / qb / qp
-  for (const [name] of header.cols) dump[name] = view(name);
-  return dump;
-}
-
-// Compare two occurrences by flat recent-index, resolving dict values so the
-// ordering is byte-identical to cmpGame/cmpSeason on the JSON occ arrays.
-function cmpOcc(d, j, k, game) {
-  const D = d.dict;
-  if (game) {
-    const aD = D.date[d.date[j]], bD = D.date[d.date[k]];
-    return (aD < bD ? 1 : aD > bD ? -1 : 0)
-      || (Number(D.gameid[d.gameid[k]] || 0) - Number(D.gameid[d.gameid[j]] || 0))
-      || (D.pid[d.pid[k]] - D.pid[d.pid[j]]);
-  }
-  const aS = D.season[d.season[j]], bS = D.season[d.season[k]];
-  const aN = D.name[d.name[j]], bN = D.name[d.name[k]];
-  return (aS < bS ? 1 : aS > bS ? -1 : 0)
-    || (aN < bN ? -1 : aN > bN ? 1 : 0)
-    || (D.pid[d.pid[j]] - D.pid[d.pid[k]]);
-}
-function occToRecent(d, j, game) {
-  const D = d.dict;
-  return game
-    ? { pl: D.name[d.name[j]], d: D.date[d.date[j]], t: D.team[d.team[j]], m: D.matchup[d.matchup[j]],
-        g: D.gameid[d.gameid[j]], pid: D.pid[d.pid[j]], w: d.wl[j] === -1 ? null : d.wl[j] }
-    : { pl: D.name[d.name[j]], d: D.season[d.season[j]], gp: d.gp[j], pid: D.pid[d.pid[j]] };
-}
-function cellFromRep(d, c, game) {
-  const D = d.dict, j = c.ti;
-  return game
-    ? { p: c.p, r: c.r, a: c.a, n: c.n, d: D.date[d.date[j]], pl: D.name[d.name[j]], t: D.team[d.team[j]],
-        m: D.matchup[d.matchup[j]], g: D.gameid[d.gameid[j]], pid: D.pid[d.pid[j]], w: d.wl[j] === -1 ? null : d.wl[j] }
-    : { p: c.p, r: c.r, a: c.a, n: c.n, d: D.season[d.season[j]], pl: D.name[d.name[j]], t: null,
-        m: D.season[d.season[j]] + ' season', g: null, gp: d.gp[j], pid: D.pid[d.pid[j]] };
-}
-
-// A line passes the same filters the JSON path applies, using the encoded
-// flags. Missing-flag semantics match JSON exactly (undefined !== 1 -> skip,
-// !undefined -> true), so a filter with no backing column drops every line.
-function lineKept(d, i, wlFilter, qual, minGames) {
-  if (wlFilter != null && (!d.w || d.w[i] !== wlFilter)) return false;
-  if (qual && ((qual.bat && (!d.qb || !d.qb[i])) || (qual.pit && (!d.qp || !d.qp[i])))) return false;
-  if (minGames && (!d.q || d.q[i] !== 1)) return false;
-  return true;
-}
-
-function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames) {
-  const { axes, v, n, nAxes, N, recOff, vNull } = dump;
-  const ix = axes.indexOf(x), iy = axes.indexOf(y), iz = axes.indexOf(z);
-  if (ix < 0 || iy < 0 || iz < 0)   // unknown axis -> no cells (matches JSON path)
-    return { axes: { x: { max: 0 }, y: { max: 0 }, z: { max: 0 } }, cells: [] };
-  const game = dump.mode === 'game';
-  const dz0 = x === 'p_np', dz1 = y === 'p_np', dz2 = z === 'p_np';
-  const cells = new Map();
-  for (let i = 0; i < N; i++) {
-    if (!lineKept(dump, i, wlFilter, qual, minGames)) continue;
-    const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
-    if (vx === vNull || vy === vNull || vz === vNull) continue;
-    if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
-    const key = vx + ',' + vy + ',' + vz;
-    let c = cells.get(key);
-    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, ti: -1 }; cells.set(key, c); }
-    c.n += n[i];
-    for (let j = recOff[i], e = recOff[i + 1]; j < e; j++) {
-      if (c.ti < 0 || cmpOcc(dump, j, c.ti, game) < 0) c.ti = j;
-    }
-  }
-  const out = [];
-  for (const c of cells.values()) out.push(cellFromRep(dump, c, game));
-  state.recentCtx = { columnar: true, dump, ix, iy, iz, game, wlFilter, qual, minGames, dz0, dz1, dz2 };
-  const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
-  const my = out.reduce((m, c) => Math.max(m, c.r), 0);
-  const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
-  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out };
-}
 
 function computeRecentsColumnar(cell) {
   const ctx = state.recentCtx, { dump, ix, iy, iz, game, wlFilter, qual, minGames, dz0, dz1, dz2 } = ctx;
@@ -1681,48 +1599,6 @@ function computeRecentsColumnar(cell) {
   }
   occ.sort((j, l) => cmpOcc(dump, j, l, game));
   return occ.slice(0, 5).map(j => occToRecent(dump, j, game));
-}
-
-function rollupCube(dump, x, y, z, wlFilter, qual, minGames) {
-  if (dump.columnar) return rollupColumnar(dump, x, y, z, wlFilter, qual, minGames);
-  const idx = {}; dump.axes.forEach((k, i) => idx[k] = i);
-  const ix = idx[x], iy = idx[y], iz = idx[z];
-  const game = dump.mode === 'game';
-  const dz0 = x === 'p_np', dz1 = y === 'p_np', dz2 = z === 'p_np';
-  const cmp = game ? cmpGame : cmpSeason;
-  const cells = new Map();
-  for (const ln of dump.lines) {
-    if (wlFilter != null && ln.w !== wlFilter) continue;
-    if (qual && ((qual.bat && !ln.qb) || (qual.pit && !ln.qp))) continue;
-    if (minGames && ln.q !== 1) continue;
-    const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];
-    if (vx == null || vy == null || vz == null) continue;
-    if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
-    const key = vx + ',' + vy + ',' + vz;
-    let c = cells.get(key);
-    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, top: null }; cells.set(key, c); }
-    c.n += ln.n;
-    // Keep only the representative (most-recent) occurrence in one pass. The
-    // full top-5 recent list is rebuilt lazily on click (computeRecents) -- it
-    // was ~73% of this function's cost and is only shown for one clicked cell,
-    // never for a boxscorigami (n===1, whose lone game IS the representative).
-    for (const o of ln.r) { if (c.top === null || cmp(o, c.top) < 0) c.top = o; }
-  }
-  const out = [];
-  for (const c of cells.values()) {
-    const top = c.top;
-    out.push(game
-      ? { p: c.p, r: c.r, a: c.a, n: c.n, d: top[5], pl: top[1], t: top[2],
-          m: top[3], g: top[4], pid: top[0], w: top[6] }
-      : { p: c.p, r: c.r, a: c.a, n: c.n, d: top[2], pl: top[1], t: null,
-          m: top[2] + ' season', g: null, gp: top[3], pid: top[0] });
-  }
-  // Context the lazy recent-list rebuild needs to reproduce this exact rollup.
-  state.recentCtx = { dump, ix, iy, iz, game, cmp, wlFilter, qual, minGames, dz0, dz1, dz2 };
-  const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
-  const my = out.reduce((m, c) => Math.max(m, c.r), 0);
-  const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
-  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out };
 }
 
 // Rebuild one cell's top-5 recent occurrences on demand (click), instead of
@@ -1758,24 +1634,42 @@ function dumpBase() {
   return SPORT === 'mlb' ? `mlb/${POSITION}` : sportBase();
 }
 
-async function getDump() {
+// Claim a fetch the head's early-fetch script started (one use per slot).
+// Its promise resolves null on network error, so callers re-fetch on null.
+function takeEarly(kind, url) {
+  const e = window.__early, s = e && e[kind];
+  if (!s || s.url !== url) return null;
+  e[kind] = null;
+  return s.p;
+}
+
+// Returns a promise and caches it immediately, so a background warm and a
+// user interaction share one download instead of fetching the dump twice.
+// Every sport ships the columnar binary format (decoded via typed-array
+// views, no JSON.parse), served with Content-Encoding: br so the browser
+// inflates it natively. USES_BINARY stays as the switch for local dev
+// against fresh brotli-JSON dumps that haven't been transcoded yet.
+function getDump(quiet) {
   const mode = MODE !== 'season' ? 'game'
     : (HAS_SEASON_AVG.has(SPORT) && !SEASON_TOTALS) ? 'season-avg' : 'season';
   const base = dumpBase();
   const key = `${base}/${mode}`;
-  if (DUMP_CACHE[key]) return DUMP_CACHE[key];
-  // Every sport ships the columnar binary format (decoded via typed-array
-  // views, no JSON.parse), served with Content-Encoding: br so the browser
-  // inflates it natively. USES_BINARY stays as the switch for local dev
-  // against fresh brotli-JSON dumps that haven't been transcoded yet.
-  const bin = USES_BINARY.has(SPORT);
-  const url = `${base}/${mode}.${bin ? 'bin' : 'json'}.br`;
-  statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
-  const d = bin ? decodeBinary(await r.arrayBuffer()) : await r.json();
-  DUMP_CACHE[key] = d;
-  return d;
+  if (!DUMP_CACHE[key]) {
+    const bin = USES_BINARY.has(SPORT);
+    const url = `${base}/${mode}.${bin ? 'bin' : 'json'}.br`;
+    if (!quiet) statusEl.textContent = `loading ${SPORTS[SPORT].label} ${mode} data…`;
+    const p = (async () => {
+      let r = takeEarly('dump', url);
+      r = r && await r;
+      if (!r) r = await fetch(url);
+      if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
+      return bin ? decodeBinary(await r.arrayBuffer()) : await r.json();
+    })();
+    // a failed load retries on the next call instead of caching the rejection
+    p.catch(() => { if (DUMP_CACHE[key] === p) delete DUMP_CACHE[key]; });
+    DUMP_CACHE[key] = p;
+  }
+  return DUMP_CACHE[key];
 }
 
 // Grouped sports (NFL) keep each stat group in its own subdirectory.
@@ -1828,7 +1722,9 @@ async function loadStats() {
   const url = (SPORT === 'mlb')
     ? `mlb/${POSITION}/${MODE === 'season' ? 'stats-season' : 'stats'}.json`
     : `${sportBase()}/stats.json`;
-  const r = await fetch(url);
+  let r = takeEarly('stats', url);
+  r = r && await r;
+  if (!r) r = await fetch(url);
   if (!r.ok) throw new Error(`GET ${url}: ` + r.status);
   const stats = (await r.json()).stats;
   for (const k of Object.keys(STATS_META)) delete STATS_META[k];
@@ -1846,6 +1742,7 @@ async function loadTally(x, y, z) {
   const minGames = SPORT !== 'mlb' && MODE === 'season'
     && MIN_GAMES && HAS_MIN_GAMES.has(SPORT);
   const r = rollupCube(dump, x, y, z, wl, qual, minGames);
+  state.recentCtx = r.recentCtx;
   const mkAxis = (k, max) => ({
     key: k, label: STATS_META[k].label, color: STATS_META[k].color, max,
   });
@@ -1853,6 +1750,33 @@ async function loadTally(x, y, z) {
     axes: { x: mkAxis(x, r.axes.x.max), y: mkAxis(y, r.axes.y.max), z: mkAxis(z, r.axes.z.max) },
     cells: r.cells,
   };
+}
+
+// Precomputed default view (written by build_defaults.mjs with the same
+// rollup.js code): render the cube from the small default.json.br instantly;
+// the full dump streams in the background via getDump(true). Returns false on
+// any mismatch (missing file, non-default axes) and the slow path runs instead.
+async function fastDefaultRender() {
+  const [x, y, z] = [axisXEl.value, axisYEl.value, axisZEl.value];
+  const url = `${dumpBase()}/default.json.br`;
+  try {
+    let r = takeEarly('cells', url);
+    r = r && await r;
+    if (!r) r = await fetch(url);
+    if (!r.ok) return false;
+    const d = await r.json();
+    if (d.axes.x.key !== x || d.axes.y.key !== y || d.axes.z.key !== z) return false;
+    const mk = (a) => ({ key: a.key, label: STATS_META[a.key].label,
+                         color: STATS_META[a.key].color, max: a.max });
+    rawData = { axes: { x: mk(d.axes.x), y: mk(d.axes.y), z: mk(d.axes.z) }, cells: d.cells };
+    state.recentCtx = null;   // recents unlock when the real dump lands
+    renderCube();
+    lbHintEl.textContent = `Most Unique ${rawData.axes.x.label}/${rawData.axes.y.label}/${rawData.axes.z.label} Lines`;
+    axisHintEl.textContent = `${rawData.axes.x.label} × ${rawData.axes.y.label} × ${rawData.axes.z.label}`;
+    detailEl.style.display = 'none';
+    lastAxes = [x, y, z];
+    return true;
+  } catch { return false; }
 }
 
 let lastAxes = [];
@@ -1962,8 +1886,17 @@ async function loadSportInner(sport) {
     fillDropdowns(stats, isMlb ? mlbAxisDefaults(stats)
                                : grouped ? SPORTS[sport].groupDefaults[GROUP]
                                          : SPORTS[sport].defaults);
-    await refresh();
-    prefetchSiblings();   // warm the other groups/positions in the background
+    if (await fastDefaultRender()) {
+      const s = sport;
+      getDump(true).then(d => {
+        // enable recent-lists for cells clicked before the full dump arrived
+        if (SPORT === s && MODE === 'game' && !state.recentCtx)
+          state.recentCtx = makeRecentCtx(d, axisXEl.value, axisYEl.value, axisZEl.value, null, null, false);
+      }).catch(() => {}).finally(() => prefetchSiblings());
+    } else {
+      await refresh();
+      prefetchSiblings();   // warm the other groups/positions in the background
+    }
   } catch (err) {
     statusEl.textContent = 'ERROR: ' + err.message;
     console.error(err);
