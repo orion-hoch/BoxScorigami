@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- Fixed desktop-width layout: phones render the desktop look scaled down
+     and rely on pinch zoom (page) / OrbitControls zoom (cube). -->
+<meta name="viewport" content="width=1200, viewport-fit=cover" />
 <title>BoxScorigami</title>
 <link rel="icon" type="image/svg+xml" href="boxscorigami.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -174,6 +176,10 @@
     flex: 0 0 auto;
   }
   .panel-btn:hover { color: #f7c948; border-color: #f7c948; }
+  /* Center the leaderboard title whether minimized or expanded: equal side
+     padding keeps it true-center while the +/− button floats on the right. */
+  #leaders .panel-header { position: relative; justify-content: center; padding: 0 30px; }
+  #leaders .panel-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
   .panel.minimized > *:not(.panel-header) { display: none !important; }
   .panel.minimized { padding-bottom: 12px; }
 
@@ -229,45 +235,6 @@
      positioning themselves against the viewport exactly as before. */
   #dock, #topdock { display: contents; }
 
-  @media (max-width: 760px) {
-    /* Both docks stack their children in normal flow, so the bars size and
-       space themselves instead of relying on hand-tuned top/bottom offsets. */
-    #topdock, #dock {
-      position: fixed; left: 6px; right: 6px; z-index: 20;
-      display: flex; gap: 6px; pointer-events: none;
-    }
-    #topdock { top: calc(6px + env(safe-area-inset-top)); flex-direction: column; }
-    /* Center the small bars (leaderboard, made-by) to content width so the
-       leaderboard's expand button sits by its title instead of flung to the
-       screen edge. The main panels opt back into full width below. */
-    #dock { bottom: calc(6px + env(safe-area-inset-bottom));
-            flex-direction: column-reverse; align-items: center; }
-    #info, #detail { align-self: stretch; }
-    /* Full-width so its leaderboard/made-by children center on screen. */
-    #brdock { align-self: stretch; align-items: center; gap: 6px; }
-    #topdock > *, #dock > * {
-      position: static; pointer-events: auto;
-      min-width: 0; max-width: none; width: auto; transform: none;
-    }
-
-    #tabs button { flex: 1; padding: 6px 0; font-size: 13px; letter-spacing: 0; }
-    #topRightControls { flex-wrap: wrap; justify-content: center; }
-    #modeToggle button { padding: 4px 10px; }
-    #injuredToggle, #totalsToggle { padding: 6px 10px; }
-
-    /* Repeated for body.sport-mlb, whose desktop width clamp outspecifies the
-       `#dock > *` reset above. */
-    #info, body.sport-mlb #info {
-      max-height: 50vh; min-width: 0; max-width: none; width: auto;
-    }
-    #leaders { max-height: 45vh; }
-    #detail .recent-list { max-height: 30vh; }
-    #status { font-size: 11px; padding: 6px 10px; }
-
-    /* Touch targets: the 22px header buttons are below the 44px minimum. */
-    .panel-btn { width: 30px; height: 30px; font-size: 16px; }
-    .info-icon { width: 18px; height: 18px; font-size: 11px; }
-  }
 </style>
 </head>
 <body>
@@ -514,10 +481,10 @@ function makeLabel(text, color = '#e6e8eb', heightUnits = 14) {
 
 const canvas = document.getElementById('canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-// Phones report DPR 3; rendering the cube at 3x costs ~2.25x the fragments of
-// 2x for no visible gain and tanks the framerate.
-const IS_MOBILE = window.matchMedia('(max-width: 760px)').matches;
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 2 : 3));
+// Touch devices lay out at the fixed 1200px desktop viewport, so DPR 1 is
+// already ~native physical resolution; anything higher tanks the framerate.
+const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
+renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(window.devicePixelRatio, 3));
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 const scene = new THREE.Scene();
@@ -944,11 +911,27 @@ function pick(event) {
   return null;
 }
 
+const _handleScreen = new THREE.Vector3();
 function pickHandle(event) {
   if (!state.handlesGroup || !state.peelOn) return null;
   rayFromEvent(event);
   const hits = raycaster.intersectObjects(state.handlesGroup.children, false);
-  return hits.length ? hits[0].object : null;
+  if (hits.length) return hits[0].object;
+  if (event.pointerType !== 'touch') return null;
+  // Fat finger: grab the nearest handle within ~30 *visual* px of the touch.
+  // Divide by the pinch-zoom scale so the grab radius stays finger-sized in
+  // layout px whether the page is zoomed out to the full 1200px or way in.
+  const rect = renderer.domElement.getBoundingClientRect();
+  const thr = 30 / ((window.visualViewport && window.visualViewport.scale) || 1);
+  let best = null, bestD2 = thr * thr;
+  for (const h of state.handlesGroup.children) {
+    h.getWorldPosition(_handleScreen).project(camera);
+    const dx = (_handleScreen.x + 1) / 2 * rect.width + rect.left - event.clientX;
+    const dy = (1 - _handleScreen.y) / 2 * rect.height + rect.top - event.clientY;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = h; }
+  }
+  return best;
 }
 
 function fmtStat(key, v) {
@@ -1140,8 +1123,9 @@ function beginHandleDrag(mesh, ev) {
   setHandleHover(mesh);
   controls.enabled = false;
   renderer.domElement.style.cursor = 'grabbing';
-  window.addEventListener('mousemove', onHandleDragMove);
-  window.addEventListener('mouseup', endHandleDrag);
+  window.addEventListener('pointermove', onHandleDragMove);
+  window.addEventListener('pointerup', endHandleDrag);
+  window.addEventListener('pointercancel', endHandleDrag);
 }
 
 function onHandleDragMove(ev) {
@@ -1167,15 +1151,17 @@ function onHandleDragMove(ev) {
 }
 
 function endHandleDrag() {
-  window.removeEventListener('mousemove', onHandleDragMove);
-  window.removeEventListener('mouseup', endHandleDrag);
+  window.removeEventListener('pointermove', onHandleDragMove);
+  window.removeEventListener('pointerup', endHandleDrag);
+  window.removeEventListener('pointercancel', endHandleDrag);
   handleDrag = null;
   controls.enabled = true;
   renderer.domElement.style.cursor = 'default';
 }
 
-renderer.domElement.addEventListener('mousemove', (ev) => {
-  if (handleDrag) return;
+renderer.domElement.addEventListener('pointermove', (ev) => {
+  // Touch has no hover; skip so an orbit drag doesn't raycast every frame.
+  if (handleDrag || ev.pointerType === 'touch') return;
   const h = pickHandle(ev);
   if (h) {
     clearHover();
@@ -1191,18 +1177,22 @@ renderer.domElement.addEventListener('mousemove', (ev) => {
 });
 
 let dragStart = null;
-renderer.domElement.addEventListener('mousedown', (ev) => {
+renderer.domElement.addEventListener('pointerdown', (ev) => {
+  if (!ev.isPrimary) return;
   if (ev.button === 0) {
     const h = pickHandle(ev);
     if (h) { beginHandleDrag(h, ev); return; }
   }
   dragStart = { x: ev.clientX, y: ev.clientY };
 });
-renderer.domElement.addEventListener('mouseup', (ev) => {
-  if (!dragStart) return;
+renderer.domElement.addEventListener('pointerup', (ev) => {
+  if (!ev.isPrimary || !dragStart) return;
   const dx = ev.clientX - dragStart.x, dy = ev.clientY - dragStart.y;
   dragStart = null;
-  if (dx * dx + dy * dy > 16) return;
+  // Finger jitter needs more slack than a mouse, and in visual px (see above).
+  const thr = ev.pointerType === 'touch'
+    ? 12 / ((window.visualViewport && window.visualViewport.scale) || 1) : 4;
+  if (dx * dx + dy * dy > thr * thr) return;
   const hit = pick(ev);
   if (!hit) return;
   if (hit.object === state.occMesh) showDetailForCell(state.instanceIndex[hit.instanceId]);
@@ -2124,13 +2114,6 @@ document.querySelectorAll('#coarseToggle button').forEach(b => {
   });
 });
 
-// The controls panel is taller than a phone screen, so start it collapsed and
-// let the header button expand it — otherwise it buries the cube.
-if (IS_MOBILE) {
-  document.getElementById('info').classList.add('minimized');
-  const b = document.querySelector('.panel-btn[data-target="info"]');
-  b.textContent = '+'; b.title = 'expand';
-}
 
 (async () => {
   const m = /sport=(\w+)/.exec(location.hash);
