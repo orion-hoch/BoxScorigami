@@ -26,25 +26,33 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 SPORTS = {
+    # `po` is the playoff test; it rides the partition key as a per-line flag
+    # (like season mode's `q`) so the client's Reg/Playoffs toggle filters the
+    # one dump instead of fetching a second copy. Season dumps carry one row
+    # per player-season *per type* (regular aggregate + playoff-run aggregate);
+    # `po_min_gp` is the Min Games qualifier for the short playoff runs.
     "nba":  {"db": "nba/nba.sqlite",       "pid": "player_id",
-             "where": "season_type = 'Regular Season'", "min_gp": 20},
+             "where": "season_type = 'Regular Season'", "min_gp": 20,
+             "po": "season_type = 'Playoffs'", "po_min_gp": 10},
     # WNBA was never in export_static.py's SPORTS; 15 is recovered from the
     # existing public/wnba/tally-season-min output.
     "wnba": {"db": "wnba/wnba.sqlite",     "pid": "player_id",
-             "where": "season_type = 'Regular Season'", "min_gp": 15},
+             "where": "season_type = 'Regular Season'", "min_gp": 15,
+             "po": "season_type = 'Playoffs'", "po_min_gp": 5},
     # NFL clamps negative game values (lost yardage) to 0, matching its
     # compute_payload(clamp=True). Season averages were never clamped.
     # Football is a 17-game sport -- per-game averages round to mush (2 rec TD
     # a year is 0), so NFL defaults to totals and ships both for the toggle.
     "nfl":  {"db": "nfl/nfl_full.sqlite",  "pid": "player_pfr_id",
              "where": "game_type = 'REG'",              "min_gp": 6,
-             "clamp": True,
+             "clamp": True, "po": "game_type = 'POST'", "po_min_gp": 2,
              "season_modes": [("season", "SUM({col})"), ("season-avg", None)]},
     # Hockey counting stats average below 3/game across all of history (max
     # per-game season averages: 3 goals, 3 points, 7 sog) -- same mush problem
     # as NFL, same fix: totals by default, per-game behind the toggle.
     "nhl":  {"db": "nhl/nhl.sqlite",       "pid": "player_id",
              "where": "game_type = 2",                  "min_gp": 20,
+             "po": "game_type = 3", "po_min_gp": 10,
              "season_modes": [("season", "SUM({col})"), ("season-avg", None)]},
 }
 
@@ -52,26 +60,28 @@ SEASON_AGG = "CAST(ROUND(1.0 * SUM({col}) / COUNT(*)) AS INT)"
 
 
 def build_season_avg(conn, stats, sanity, pid, where, table, dest,
-                     agg=SEASON_AGG):
+                     agg=SEASON_AGG, po="0"):
     """Season rollup by player-season, one column per stat key. A stat can
     carry its own "season_agg" SQL template (e.g. a rate recomputed from
     summed components, where neither SUM nor an average of per-game values
-    is correct) which then applies in every season mode."""
+    is correct) which then applies in every season mode. Playoff games roll
+    up into their own row per player-season, flagged po=1."""
     aggs = ", ".join((s.get("season_agg") or agg).format(col=s["col"]) + f" AS {k}"
                      for k, s in stats.items())
     conn.execute(f"DROP TABLE IF EXISTS {dest}")
     conn.execute(f"""
         CREATE TABLE {dest} AS
-        SELECT {pid} AS player_id, player_name, season, COUNT(*) AS gp, {aggs}
+        SELECT {pid} AS player_id, player_name, season,
+               CASE WHEN {po} THEN 1 ELSE 0 END AS po, COUNT(*) AS gp, {aggs}
         FROM {table}
-        WHERE {where} AND {sanity}
-        GROUP BY {pid}, player_name, season
+        WHERE (({where}) OR ({po})) AND {sanity}
+        GROUP BY {pid}, player_name, season, po
     """)
     conn.commit()
 
 
 def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
-         matchup="matchup", clamp=False):
+         matchup="matchup", clamp=False, po=None, po_min_gp=None):
     keys = list(stats)
     if mode == "game":
         col = (lambda c: f"MAX({c}, 0)") if clamp else (lambda c: c)
@@ -84,19 +94,24 @@ def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
         extra_names = ["pid", "player_name", "team_abbr", "matchup",
                        "game_id", "game_date"]
         order = "game_date DESC, game_id DESC, pid DESC"
-        flags = []
+        # Playoff flag partitions the lines like season mode's `q`, so the
+        # client's Reg/Playoffs toggle filters without a refetch.
+        flags = ["po"]
+        sel += f", CASE WHEN {po} THEN 1 ELSE 0 END AS po"
         # Game mode deliberately spans every season type: the combo files it
         # replaces filtered on sanity only (`where` applied to season averages).
         src_where = sanity
     else:
-        sel = ", ".join(keys)
+        sel = ", ".join(keys) + ", po"
         extra = "player_id AS pid, player_name, season, gp"
         extra_names = ["pid", "player_name", "season", "gp"]
         order = "season DESC, player_name ASC, pid ASC"
         # Qualifier rides in the partition key so the client can filter the one
         # dump instead of us shipping a second min-games copy of everything.
-        flags = ["q"]
-        sel += f", CASE WHEN gp >= {min_gp} THEN 1 ELSE 0 END AS q"
+        # Playoff-run rows (po=1) qualify at their own, shorter threshold.
+        flags = ["q", "po"]
+        sel += (f", CASE WHEN gp >= (CASE WHEN po = 1 THEN {po_min_gp} "
+                f"ELSE {min_gp} END) THEN 1 ELSE 0 END AS q")
         src_where = "1=1"
 
     part_cols = keys + flags
@@ -119,8 +134,8 @@ def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
         if key != curkey:
             curkey = key
             cur = {"v": [r[k] for k in keys], "n": r["n"], "r": []}
-            if flags:
-                cur["q"] = r["q"]
+            for f in flags:
+                cur[f] = r[f]
             lines.append(cur)
         if mode == "game":
             cur["r"].append([
@@ -182,7 +197,7 @@ def main():
         for mode, agg in cfg.get("season_modes", [("season", None)]):
             tbl = f"season_dump_{mode.replace('-', '_')}{'_' + tag if tag else ''}"
             build_season_avg(conn, stats, sanity, cfg["pid"], cfg["where"],
-                             table, tbl, agg or SEASON_AGG)
+                             table, tbl, agg or SEASON_AGG, cfg["po"])
             jobs_by_mode.append((mode, tbl))
 
         for mode, tbl in jobs_by_mode:
@@ -190,7 +205,8 @@ def main():
                               sanity=sanity, pid=cfg["pid"],
                               where=cfg["where"], min_gp=cfg["min_gp"],
                               matchup=matchup if mode == "game" else None,
-                              clamp=cfg.get("clamp", False))
+                              clamp=cfg.get("clamp", False), po=cfg["po"],
+                              po_min_gp=cfg["po_min_gp"])
             print(f"  {mode:6} {n:>9,} lines  {raw/1e6:7.1f} MB raw "
                   f"-> {gz/1e6:5.1f} MB gz")
     print(f"\nDONE in {(time.time()-t0)/60:.1f}m")

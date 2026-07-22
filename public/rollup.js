@@ -21,9 +21,9 @@ export function decodeBinary(buf) {
     columnar: true, mode: header.mode, axes: header.axes, N: header.N, nAxes: header.nAxes,
     vNull: header.vNull, dict: header.dict,
     v: view('v'), n: view('n'), recOff: view('recOff'),
-    q: null, w: null, qb: null, qp: null,
+    q: null, w: null, qb: null, qp: null, po: null,
   };
-  for (const f of header.flags || []) dump[f] = view(f);   // q / w / qb / qp
+  for (const f of header.flags || []) dump[f] = view(f);   // q / w / qb / qp / po
   for (const [name] of header.cols) dump[name] = view(name);
   return dump;
 }
@@ -72,8 +72,9 @@ function cellFromRep(d, c, game) {
 // A line passes the same filters the JSON path applies, using the encoded
 // flags. Missing-flag semantics match JSON exactly (undefined !== 1 -> skip,
 // !undefined -> true), so a filter with no backing column drops every line.
-export function lineKept(d, i, wlFilter, qual, minGames) {
+export function lineKept(d, i, wlFilter, qual, minGames, poFilter) {
   if (wlFilter != null && (!d.w || d.w[i] !== wlFilter)) return false;
+  if (poFilter != null && (!d.po || d.po[i] !== poFilter)) return false;
   if (qual && ((qual.bat && (!d.qb || !d.qb[i])) || (qual.pit && (!d.qp || !d.qp[i])))) return false;
   if (minGames && (!d.q || d.q[i] !== 1)) return false;
   return true;
@@ -81,23 +82,23 @@ export function lineKept(d, i, wlFilter, qual, minGames) {
 
 // Everything computeRecents needs to reproduce a rollup's exact filtering,
 // built once here so rollup and the lazy recent-list can never disagree.
-export function makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames) {
+export function makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
   const game = dump.mode === 'game';
   const ix = dump.axes.indexOf(x), iy = dump.axes.indexOf(y), iz = dump.axes.indexOf(z);
   return { columnar: !!dump.columnar, dump, ix, iy, iz, game,
-           cmp: game ? cmpGame : cmpSeason, wlFilter, qual, minGames,
+           cmp: game ? cmpGame : cmpSeason, wlFilter, qual, minGames, poFilter,
            dz0: x === 'p_np', dz1: y === 'p_np', dz2: z === 'p_np' };
 }
 
-function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames) {
-  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames);
+function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
+  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter);
   const { ix, iy, iz, game, dz0, dz1, dz2 } = ctx;
   if (ix < 0 || iy < 0 || iz < 0)   // unknown axis -> no cells (matches JSON path)
     return { axes: { x: { max: 0 }, y: { max: 0 }, z: { max: 0 } }, cells: [], recentCtx: ctx };
   const { v, n, nAxes, N, recOff, vNull } = dump;
   const cells = new Map();
   for (let i = 0; i < N; i++) {
-    if (!lineKept(dump, i, wlFilter, qual, minGames)) continue;
+    if (!lineKept(dump, i, wlFilter, qual, minGames, poFilter)) continue;
     const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
     if (vx === vNull || vy === vNull || vz === vNull) continue;
     if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
@@ -117,13 +118,14 @@ function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames) {
   return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out, recentCtx: ctx };
 }
 
-export function rollupCube(dump, x, y, z, wlFilter, qual, minGames) {
-  if (dump.columnar) return rollupColumnar(dump, x, y, z, wlFilter, qual, minGames);
-  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames);
+export function rollupCube(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
+  if (dump.columnar) return rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter);
+  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter);
   const { ix, iy, iz, game, cmp, dz0, dz1, dz2 } = ctx;
   const cells = new Map();
   for (const ln of dump.lines) {
     if (wlFilter != null && ln.w !== wlFilter) continue;
+    if (poFilter != null && ln.po !== poFilter) continue;
     if (qual && ((qual.bat && !ln.qb) || (qual.pit && !ln.qp))) continue;
     if (minGames && ln.q !== 1) continue;
     const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];

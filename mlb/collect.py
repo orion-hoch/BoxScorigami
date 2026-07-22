@@ -622,22 +622,32 @@ def build_season_unified(conn):
     conn.execute("""
         CREATE TABLE season_unified AS
         WITH bat AS (
-            SELECT player_id, MAX(player_name) AS player_name, season, COUNT(*) AS g,
+            SELECT player_id, MAX(player_name) AS player_name, season,
+                   CASE WHEN game_type='R' THEN 0 ELSE 1 END AS po, COUNT(*) AS g,
                    SUM(ab) ab, SUM(r) r, SUM(h) h, SUM(doubles) doubles, SUM(triples) triples,
                    SUM(hr) hr, SUM(rbi) rbi, SUM(bb) bb, SUM(k) so, SUM(sb) sb
-            FROM player_games WHERE game_type='R' GROUP BY player_id, season),
+            FROM player_games WHERE game_type IN ('R','F','D','L','W','C')
+            GROUP BY player_id, season, po),
         bevt AS (
-            SELECT player_id, season, SUM(pa) pa, SUM(ibb) ibb, SUM(cs) cs, SUM(hbp) hbp, SUM(sf) sf
-            FROM game_batting WHERE season IS NOT NULL GROUP BY player_id, season),
+            SELECT gb.player_id, gb.season,
+                   CASE WHEN gs.game_type='R' THEN 0 ELSE 1 END AS po,
+                   SUM(pa) pa, SUM(ibb) ibb, SUM(cs) cs, SUM(hbp) hbp, SUM(sf) sf
+            FROM game_batting gb
+            JOIN games_to_scrape gs ON gs.game_id = gb.game_id
+            WHERE gb.season IS NOT NULL AND gs.game_type IN ('R','F','D','L','W','C')
+            GROUP BY gb.player_id, gb.season, po),
         pit AS (
             SELECT player_id, MAX(player_name) AS player_name, season,
+                   CASE WHEN game_type='R' THEN 0 ELSE 1 END AS po,
                    SUM(outs) p_outs, SUM(k) p_k, SUM(bb) p_bb, SUM(h) p_h, SUM(er) p_er,
                    SUM(r) p_r, SUM(hr) p_hr, SUM(p) p_np, SUM(s) p_s, SUM(wp) p_wp, SUM(bk) p_bk,
                    SUM(CASE WHEN won=1 THEN 1 ELSE 0 END) w, SUM(CASE WHEN won=0 THEN 1 ELSE 0 END) l,
                    SUM(sv) sv, SUM(bs) bs, SUM(sho) sho, SUM(cg) cg
-            FROM pitcher_games WHERE game_type='R' GROUP BY player_id, season),
-        ids AS (SELECT player_id, season FROM bat UNION SELECT player_id, season FROM pit)
-        SELECT i.player_id, i.season,
+            FROM pitcher_games WHERE game_type IN ('R','F','D','L','W','C')
+            GROUP BY player_id, season, po),
+        ids AS (SELECT player_id, season, po FROM bat
+                UNION SELECT player_id, season, po FROM pit)
+        SELECT i.player_id, i.season, i.po,
             COALESCE(bat.player_name, pit.player_name) AS player_name,
             COALESCE(sp.position, CASE WHEN pit.p_outs IS NOT NULL THEN 'P' END) AS position,
             COALESCE(bat.g, 0) AS g,
@@ -664,12 +674,16 @@ def build_season_unified(conn):
             -- Playing-time qualifiers. Rate stats computed off a handful of PA or
             -- outs (a 1-for-1 season, a 1-out 7-ER outing) are what stretch the
             -- rate axes: unfiltered ERA runs to 189.00 and AVG to 1.000.
-            CASE WHEN COALESCE(bevt.pa, 0) >= 150 THEN 1 ELSE 0 END AS qual_bat,
-            CASE WHEN COALESCE(pit.p_outs, 0) >= 150 THEN 1 ELSE 0 END AS qual_pit
+            -- Playoff runs top out around 20 games, so they qualify at 30 PA /
+            -- 30 outs (10 IP) instead of the 150 a full season demands.
+            CASE WHEN COALESCE(bevt.pa, 0) >=
+                 (CASE WHEN i.po=1 THEN 30 ELSE 150 END) THEN 1 ELSE 0 END AS qual_bat,
+            CASE WHEN COALESCE(pit.p_outs, 0) >=
+                 (CASE WHEN i.po=1 THEN 30 ELSE 150 END) THEN 1 ELSE 0 END AS qual_pit
         FROM ids i
-        LEFT JOIN bat  ON bat.player_id=i.player_id  AND bat.season=i.season
-        LEFT JOIN bevt ON bevt.player_id=i.player_id AND bevt.season=i.season
-        LEFT JOIN pit  ON pit.player_id=i.player_id  AND pit.season=i.season
+        LEFT JOIN bat  ON bat.player_id=i.player_id  AND bat.season=i.season  AND bat.po=i.po
+        LEFT JOIN bevt ON bevt.player_id=i.player_id AND bevt.season=i.season AND bevt.po=i.po
+        LEFT JOIN pit  ON pit.player_id=i.player_id  AND pit.season=i.season  AND pit.po=i.po
         LEFT JOIN season_position sp ON sp.player_id=i.player_id AND sp.season=i.season
     """)
     conn.execute("ALTER TABLE season_unified RENAME COLUMN ops_x TO ops")
@@ -750,7 +764,18 @@ def emit_dump(conn, poskey, mode):
     # Season lines carry the qualifier flags the way game lines carry `won`:
     # folded into the partition key so the client can filter without a refetch.
     qual = mode == "season"
-    part_cols = keys + (["won"] if wl else []) + (["qual_bat", "qual_pit"] if qual else [])
+    # Playoff flag for the client's Reg/Playoffs toggle. season_unified already
+    # carries po (one row per player-season per type); game rows compute it
+    # here. All-Star, spring and exhibition games stay NULL: shown with the
+    # filter off, hidden by either exclusive state (same semantics as a
+    # no-decision under W/L).
+    po = True
+    if mode == "game":
+        table = ("(SELECT *, CASE WHEN game_type='R' THEN 0 "
+                 "WHEN game_type IN ('F','D','L','W','C') THEN 1 END AS po "
+                 f"FROM {table})")
+    part_cols = keys + (["won"] if wl else []) + (["po"] if po else []) \
+        + (["qual_bat", "qual_pit"] if qual else [])
     part = ",".join(part_cols)
     if mode == "game":
         extra = "player_id, player_name, team_abbr, matchup, game_id, game_date, won"
@@ -773,6 +798,8 @@ def emit_dump(conn, poskey, mode):
             cur = {"v": [r[c] for c in keys], "n": r["n"], "r": []}
             if wl:
                 cur["w"] = r["won"]
+            if po:
+                cur["po"] = r["po"]
             if qual:
                 cur["qb"] = r["qual_bat"]
                 cur["qp"] = r["qual_pit"]

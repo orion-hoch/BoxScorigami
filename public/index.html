@@ -21,6 +21,17 @@
   };
 })();
 </script>
+<!-- The import map MUST precede the modulepreload links: a preloaded module
+     parsed before the map registers (instant on warm-cache reloads) makes the
+     browser reject the map, and `import 'three'` fails page-wide. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js",
+    "three/addons/": "./vendor/"
+  }
+}
+</script>
 <link rel="modulepreload" href="vendor/three.module.min.js" />
 <link rel="modulepreload" href="vendor/controls/OrbitControls.js" />
 <link rel="modulepreload" href="rollup.js" />
@@ -158,19 +169,19 @@
     position: absolute; top: 12px; right: 12px;
     display: flex; gap: 6px; align-items: flex-start; z-index: 10;
   }
-  #modeToggle {
+  #modeToggle, #poToggle {
     display: flex; gap: 4px;
     background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
     padding: 3px; backdrop-filter: blur(6px);
   }
-  #modeToggle button {
+  #modeToggle button, #poToggle button {
     background: transparent; color: #8b94a0; border: 0;
     padding: 4px 16px; font-size: 12px; font-weight: 700;
     border-radius: 5px; cursor: pointer; letter-spacing: .04em;
     font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
   }
-  #modeToggle button:hover { color: #e6e8eb; }
-  #modeToggle button.active { background: #2a2f36; color: #f7c948; }
+  #modeToggle button:hover, #poToggle button:hover { color: #e6e8eb; }
+  #modeToggle button.active, #poToggle button.active { background: #2a2f36; color: #f7c948; }
   #injuredToggle, #totalsToggle {
     display: none;
     background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
@@ -268,6 +279,10 @@
 <div id="topRightControls">
   <button id="totalsToggle">Season: Totals</button>
   <button id="injuredToggle">Min Games: on</button>
+  <div id="poToggle" style="display:none">
+    <button data-po="reg" class="active">Regular</button>
+    <button data-po="po" class="active">Playoffs</button>
+  </div>
   <div id="modeToggle">
     <button data-mode="game" class="active">Single Game</button>
     <button data-mode="season">Season</button>
@@ -366,15 +381,6 @@
 </div>
 </div>
 </div>
-
-<script type="importmap">
-{
-  "imports": {
-    "three": "./vendor/three.module.min.js",
-    "three/addons/": "./vendor/"
-  }
-}
-</script>
 
 <script type="module">
 import * as THREE from 'three';
@@ -1025,7 +1031,7 @@ function showDetailForCell(c) {
   // repeated statlines, fill the recent box just after the panel paints so the
   // click is instant, then cache it on the cell so re-opening is free and the
   // list is already there when the user expands it.
-  if (SPORT !== 'mlb' && c.n >= 2) {
+  if (c.n >= 2) {
     const fill = () => {
       if (myToken !== detailToken) return;   // a later click owns the panel now
       // retry empties: a click before the background dump arrives yields [],
@@ -1557,6 +1563,7 @@ const STATS_META = {};
 let POSITION = 'all';
 let GROUP = 'off';
 let WL_W = true, WL_L = true;
+let PO_REG = true, PO_PLAYOFF = true;
 const DUMP_CACHE = {};
 const MLB_POS_PRIMARY = [['all', 'All'], ['p', 'P'], ['pos', 'POS']];
 const MLB_POS_FIELD = [
@@ -1584,13 +1591,20 @@ function wlFilterValue() {
   return -1;
 }
 
+function poFilterValue() {
+  if (PO_REG && PO_PLAYOFF) return null;
+  if (PO_PLAYOFF) return 1;
+  if (PO_REG) return 0;
+  return -1;
+}
+
 
 function computeRecentsColumnar(cell) {
-  const ctx = state.recentCtx, { dump, ix, iy, iz, game, wlFilter, qual, minGames, dz0, dz1, dz2 } = ctx;
+  const ctx = state.recentCtx, { dump, ix, iy, iz, game, wlFilter, qual, minGames, poFilter, dz0, dz1, dz2 } = ctx;
   const { v, nAxes, N, recOff, vNull } = dump, k = COARSE;
   const occ = [];
   for (let i = 0; i < N; i++) {
-    if (!lineKept(dump, i, wlFilter, qual, minGames)) continue;
+    if (!lineKept(dump, i, wlFilter, qual, minGames, poFilter)) continue;
     const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
     if (vx === vNull || vy === vNull || vz === vNull) continue;
     if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
@@ -1604,16 +1618,17 @@ function computeRecentsColumnar(cell) {
 // Rebuild one cell's top-5 recent occurrences on demand (click), instead of
 // precomputing them for every cell at load. Rescans the cached dump for the
 // lines that fall in this cell's (coarsened) block, applying the same filters
-// the rollup used. Never called for n===1 cells or MLB.
+// the rollup used. Never called for n===1 cells.
 function computeRecents(cell) {
   const ctx = state.recentCtx;
   if (!ctx) return [];
   if (ctx.columnar) return computeRecentsColumnar(cell);
-  const { dump, ix, iy, iz, game, cmp, wlFilter, qual, minGames, dz0, dz1, dz2 } = ctx;
+  const { dump, ix, iy, iz, game, cmp, wlFilter, qual, minGames, poFilter, dz0, dz1, dz2 } = ctx;
   const k = COARSE;
   const occ = [];
   for (const ln of dump.lines) {
     if (wlFilter != null && ln.w !== wlFilter) continue;
+    if (poFilter != null && ln.po !== poFilter) continue;
     if (qual && ((qual.bat && !ln.qb) || (qual.pit && !ln.qp))) continue;
     if (minGames && ln.q !== 1) continue;
     const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];
@@ -1741,7 +1756,12 @@ async function loadTally(x, y, z) {
   const qual = SPORT === 'mlb' ? qualDomains(x, y, z) : null;
   const minGames = SPORT !== 'mlb' && MODE === 'season'
     && MIN_GAMES && HAS_MIN_GAMES.has(SPORT);
-  const r = rollupCube(dump, x, y, z, wl, qual, minGames);
+  // MLB field-position *game* dumps have no playoff rows (per-game fielding
+  // position is regular-season only), so there the toggle is gated exactly
+  // like W/L. Season dumps carry playoff rows for every sport and position.
+  const po = (MODE === 'season' || SPORT !== 'mlb' || MLB_FULL_POS.has(POSITION))
+    ? poFilterValue() : null;
+  const r = rollupCube(dump, x, y, z, wl, qual, minGames, po);
   state.recentCtx = r.recentCtx;
   const mkAxis = (k, max) => ({
     key: k, label: STATS_META[k].label, color: STATS_META[k].color, max,
@@ -1858,6 +1878,7 @@ async function loadSportInner(sport) {
   MIN_GAMES = true;
   QUALIFIED = true;
   SEASON_TOTALS = true;
+  PO_REG = PO_PLAYOFF = true;
   COARSE = 1;
   const modeToggle = document.getElementById('modeToggle');
   modeToggle.querySelectorAll('button').forEach(b =>
@@ -1891,7 +1912,7 @@ async function loadSportInner(sport) {
       getDump(true).then(d => {
         // enable recent-lists for cells clicked before the full dump arrived
         if (SPORT === s && MODE === 'game' && !state.recentCtx)
-          state.recentCtx = makeRecentCtx(d, axisXEl.value, axisYEl.value, axisZEl.value, null, null, false);
+          state.recentCtx = makeRecentCtx(d, axisXEl.value, axisYEl.value, axisZEl.value, null, null, false, null);
       }).catch(() => {}).finally(() => prefetchSiblings());
     } else {
       await refresh();
@@ -1985,6 +2006,8 @@ async function setPosition(pos) {
   if (pos === POSITION) return;
   POSITION = pos;
   WL_W = WL_L = true;
+  PO_REG = PO_PLAYOFF = true;
+  updatePoToggle();
   buildPosBar();
   await reloadMlbAxes();
 }
@@ -2003,8 +2026,25 @@ document.getElementById('totalsToggle').addEventListener('click', () => {
   refresh();
 });
 
+function updatePoToggle() {
+  const wrap = document.getElementById('poToggle');
+  const show = MODE === 'season' || SPORT !== 'mlb' || MLB_FULL_POS.has(POSITION);
+  wrap.style.display = show ? 'flex' : 'none';
+  wrap.querySelector('button[data-po="reg"]').classList.toggle('active', PO_REG);
+  wrap.querySelector('button[data-po="po"]').classList.toggle('active', PO_PLAYOFF);
+}
+
+document.querySelectorAll('#poToggle button').forEach(b => {
+  b.addEventListener('click', () => {
+    if (b.dataset.po === 'reg') PO_REG = !PO_REG; else PO_PLAYOFF = !PO_PLAYOFF;
+    updatePoToggle();
+    refresh();
+  });
+});
+
 function updateMinGamesToggle() {
   updateTotalsToggle();
+  updatePoToggle();
   const btn = document.getElementById('injuredToggle');
   const isQual = HAS_QUALIFIER.has(SPORT);
   const show = MODE === 'season' && (isQual || HAS_MIN_GAMES.has(SPORT));

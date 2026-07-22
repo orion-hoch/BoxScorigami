@@ -25,9 +25,10 @@ const SPECS = {
 };
 SPECS['season-avg'] = SPECS.season;
 // Optional per-line flags the client's filters read: q (min-games, WNBA/NFL),
-// w (W/L, MLB all/p game), qb/qp (qualified batter/pitcher, MLB season). Encoded
-// as Int8 only when a dump actually carries them.
-const LINE_FLAGS = ['q', 'w', 'qb', 'qp'];
+// w (W/L, MLB all/p game), qb/qp (qualified batter/pitcher, MLB season),
+// po (playoff game, every sport's game mode). Encoded as Int8 only when a
+// dump actually carries them.
+const LINE_FLAGS = ['q', 'w', 'qb', 'qp', 'po'];
 
 function encodeDump(d) {
   const mode = d.mode, axes = d.axes, N = d.lines.length, nAxes = axes.length;
