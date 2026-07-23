@@ -40,8 +40,6 @@ def compute_payload(db, stats, sanity, x, y, z, clamp=False,
     cx, cy, cz = q(raw_cx), q(raw_cy), q(raw_cz)
     notnull = (f"{raw_cx} IS NOT NULL AND {raw_cy} IS NOT NULL "
                f"AND {raw_cz} IS NOT NULL")
-    # An SQL expression over the aliased source table `t`, so tables without a
-    # matchup column of their own can look one up.
     matchup_sel = f"{matchup} AS matchup" if matchup else "NULL AS matchup"
     conn = open_db(db)
 

@@ -26,30 +26,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 
 SPORTS = {
-    # `po` is the playoff test; it rides the partition key as a per-line flag
-    # (like season mode's `q`) so the client's Reg/Playoffs toggle filters the
-    # one dump instead of fetching a second copy. Season dumps carry one row
-    # per player-season *per type* (regular aggregate + playoff-run aggregate);
-    # `po_min_gp` is the Min Games qualifier for the short playoff runs.
     "nba":  {"db": "nba/nba.sqlite",       "pid": "player_id",
              "where": "season_type = 'Regular Season'", "min_gp": 20,
              "po": "season_type = 'Playoffs'", "po_min_gp": 10},
-    # WNBA was never in export_static.py's SPORTS; 15 is recovered from the
-    # existing public/wnba/tally-season-min output.
     "wnba": {"db": "wnba/wnba.sqlite",     "pid": "player_id",
              "where": "season_type = 'Regular Season'", "min_gp": 15,
              "po": "season_type = 'Playoffs'", "po_min_gp": 5},
-    # NFL clamps negative game values (lost yardage) to 0, matching its
-    # compute_payload(clamp=True). Season averages were never clamped.
-    # Football is a 17-game sport -- per-game averages round to mush (2 rec TD
-    # a year is 0), so NFL defaults to totals and ships both for the toggle.
     "nfl":  {"db": "nfl/nfl_full.sqlite",  "pid": "player_pfr_id",
              "where": "game_type = 'REG'",              "min_gp": 6,
              "clamp": True, "po": "game_type = 'POST'", "po_min_gp": 2,
              "season_modes": [("season", "SUM({col})"), ("season-avg", None)]},
-    # Hockey counting stats average below 3/game across all of history (max
-    # per-game season averages: 3 goals, 3 points, 7 sog) -- same mush problem
-    # as NFL, same fix: totals by default, per-game behind the toggle.
     "nhl":  {"db": "nhl/nhl.sqlite",       "pid": "player_id",
              "where": "game_type = 2",                  "min_gp": 20,
              "po": "game_type = 3", "po_min_gp": 10,
@@ -86,29 +72,20 @@ def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
     if mode == "game":
         col = (lambda c: f"MAX({c}, 0)") if clamp else (lambda c: c)
         sel = ", ".join(f"{col(s['col'])} AS {k}" for k, s in stats.items())
-        # `matchup` is an SQL expression over the aliased source table `t`, so a
-        # table without its own matchup column can look one up (see nfl/server.py).
         mu = f"{matchup} AS matchup" if matchup else "NULL AS matchup"
         extra = (f"{pid} AS pid, player_name, team_abbr, {mu}, "
                  f"game_id, game_date")
         extra_names = ["pid", "player_name", "team_abbr", "matchup",
                        "game_id", "game_date"]
         order = "game_date DESC, game_id DESC, pid DESC"
-        # Playoff flag partitions the lines like season mode's `q`, so the
-        # client's Reg/Playoffs toggle filters without a refetch.
         flags = ["po"]
         sel += f", CASE WHEN {po} THEN 1 ELSE 0 END AS po"
-        # Game mode deliberately spans every season type: the combo files it
-        # replaces filtered on sanity only (`where` applied to season averages).
         src_where = sanity
     else:
         sel = ", ".join(keys) + ", po"
         extra = "player_id AS pid, player_name, season, gp"
         extra_names = ["pid", "player_name", "season", "gp"]
         order = "season DESC, player_name ASC, pid ASC"
-        # Qualifier rides in the partition key so the client can filter the one
-        # dump instead of us shipping a second min-games copy of everything.
-        # Playoff-run rows (po=1) qualify at their own, shorter threshold.
         flags = ["q", "po"]
         sel += (f", CASE WHEN gp >= (CASE WHEN po = 1 THEN {po_min_gp} "
                 f"ELSE {min_gp} END) THEN 1 ELSE 0 END AS q")
@@ -149,9 +126,6 @@ def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
     dest_dir.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"mode": mode, "axes": keys, "lines": lines},
                          separators=(",", ":"))
-    # Brotli q9: ~40% smaller than gzip-9, served with Content-Encoding: br so
-    # the browser inflates natively (see Caddyfile). q11 is far slower for a
-    # marginal gain on files this size.
     out = dest_dir / f"{mode}.json.br"
     data = brotli.compress(payload.encode("utf-8"), quality=9)
     out.write_bytes(data)

@@ -44,10 +44,6 @@ def open_db():
     return shared.open_db(DB_PATH)
 
 
-def _validate_axes(x, y, z):
-    shared.validate_axes(STATS, x, y, z)
-
-
 @lru_cache(maxsize=64)
 def compute_payload(x, y, z) -> str:
     return shared.compute_payload(DB_PATH, STATS, SANITY_FILTER, x, y, z,

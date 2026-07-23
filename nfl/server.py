@@ -24,8 +24,6 @@ OFFENSE = {
     "rec_td":   {"col": "rec_td",   "label": "Rec TD",        "color": "#4dd0e1"},
 }
 
-# PFR credits half sacks, but the cube grid is integer-only — store half-sack
-# units so a 1.5-sack game stays a distinct statline from a 2.0-sack game.
 DEFENSE = {
     "tackles_combined": {"col": "tackles_combined", "label": "Tackles",  "color": "#ff6b6b"},
     "tackles_solo":     {"col": "tackles_solo",     "label": "Solo Tk",  "color": "#ff8e8e"},
@@ -56,8 +54,6 @@ SPECIAL = {
     "punt_yds":      {"col": "punt_yds",      "label": "Punt Yds", "color": "#c39bff"},
 }
 
-# returns and kicking are separate PFR tables; a punter rarely returns kicks, so
-# neither side may be joined away. Union the ids, then outer-join both.
 SPECIAL_TABLE = """(
     SELECT ids.game_id, ids.player_pfr_id,
            COALESCE(r.game_date, k.game_date)     AS game_date,
@@ -115,9 +111,6 @@ ST_SANITY = shared.sanity_filter([
 ] + [f"{c} < 0" for c in ("kick_ret", "kick_ret_td", "punt_ret", "punt_ret_td",
                           "fgm", "fga", "xpm", "punt")])
 
-# PFR's defense/returns/kicking box scores don't repeat the matchup, but
-# player_games already has one per (game, team) -- borrow it. `t` is the dump
-# exporter's alias for the source table.
 MATCHUP_LOOKUP = """(SELECT p.matchup FROM player_games p
      WHERE p.game_id = t.game_id AND p.team_abbr = t.team_abbr LIMIT 1)"""
 
@@ -133,17 +126,12 @@ GROUPS = {
             "defaults": ("kick_ret_yds", "punt_ret_yds", "fgm")},
 }
 
-# The dev server and any single-group caller default to offense.
 STATS = OFFENSE
 DEFAULTS = ("pass_yds", "pass_td", "rush_yds")
 
 
 def open_db():
     return shared.open_db(DB_PATH)
-
-
-def _validate_axes(x, y, z):
-    shared.validate_axes(STATS, x, y, z)
 
 
 @lru_cache(maxsize=64)

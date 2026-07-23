@@ -330,7 +330,6 @@ def show_stats(conn):
         print(f"  -> {need_pitch:,} done games still need pitching: run `collect.py season-batch`")
 
 
-# ---------------- season-batch ----------------
 def sb_team_map():
     r = requests.get("https://statsapi.mlb.com/api/v1/teams",
                      params={"sportId": 1}, timeout=30)
@@ -433,7 +432,6 @@ def season_batch(conn, season, delay):
           f"rows, {len(games):,} games in {(time.time()-t0)/60:.1f}m")
 
 
-# ---------------- bulk gameLog backfills ----------------
 GB_FIELDS = [
     ("pa", "plateAppearances"), ("hbp", "hitByPitch"), ("ibb", "intentionalWalks"),
     ("sf", "sacFlies"), ("sh", "sacBunts"), ("gidp", "groundIntoDoublePlay"),
@@ -577,7 +575,6 @@ def bulk_gamelog(conn, job, start, end, delay, retry_failed=False):
     print(f"\nDONE. {grand_ok:,} player-seasons, {grand_rows:,} {label} rows in {(time.time()-t0)/3600:.2f}h")
 
 
-# ---------------- build ----------------
 RATE_SCALE = {
     "avg": (100, 2), "obp": (100, 2), "slg": (100, 2), "ops": (100, 2), "babip": (100, 2),
     "win_pct": (1000, 3), "strike_pct": (1000, 3), "whip": (100, 2),
@@ -714,8 +711,6 @@ PIT_COUNT_SEASON = PIT_COUNT_GAME + [
 PIT_RATE = [("win_pct", "Win%"), ("era", "ERA"), ("whip", "WHIP"),
             ("k9", "K/9"), ("kbb", "K:BB"), ("strike_pct", "Strike%")]
 
-# Which playing-time qualifier each rate stat depends on. Counting stats have
-# none, so the Qualified toggle only bites on cubes that use a rate axis.
 RATE_DOMAIN = ({k: "bat" for k, _ in BAT_RATE}
                | {k: "pit" for k, _ in PIT_RATE})
 POSITIONS = {
@@ -761,14 +756,7 @@ def emit_dump(conn, poskey, mode):
     else:
         where = f"WHERE position='{pos_abbr}'"
     wl = mode == "game" and domain == "full"
-    # Season lines carry the qualifier flags the way game lines carry `won`:
-    # folded into the partition key so the client can filter without a refetch.
     qual = mode == "season"
-    # Playoff flag for the client's Reg/Playoffs toggle. season_unified already
-    # carries po (one row per player-season per type); game rows compute it
-    # here. All-Star, spring and exhibition games stay NULL: shown with the
-    # filter off, hidden by either exclusive state (same semantics as a
-    # no-decision under W/L).
     po = True
     if mode == "game":
         table = ("(SELECT *, CASE WHEN game_type='R' THEN 0 "
@@ -818,8 +806,6 @@ def emit_dump(conn, poskey, mode):
     stem = "game" if mode == "game" else "season"
     for legacy in (f"{stem}.json", f"{stem}.json.gz"):
         (base / legacy).unlink(missing_ok=True)
-    # Brotli like every other sport, so dump_to_binary.js can transcode it:
-    #   node dump_to_binary.js public/mlb/*/{game,season}.json.br
     (base / f"{stem}.json.br").write_bytes(
         brotli.compress(payload.encode("utf-8"), quality=9))
     return len(lines)

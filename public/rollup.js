@@ -1,20 +1,10 @@
-// Shared dump decoding + cube rollup, used by the page (index.html) AND by
-// build_defaults.mjs, which precomputes each sport's default view at build
-// time. Keeping one copy is what guarantees the precomputed default.json.br
-// is byte-identical to what the client would compute from the full dump.
-// No DOM, no three.js — plain data in, plain data out.
-
-// ---- Columnar binary dumps ----------------------------------------------
-// decodeBinary turns *.bin.br (already inflated by the browser/node) into
-// typed-array columns instead of a JSON array of line objects, skipping the
-// ~800ms JSON.parse.
 const _CTORD = { i8: Int8Array, i16: Int16Array, u16: Uint16Array, i32: Int32Array, u32: Uint32Array };
 export function decodeBinary(buf) {
   const u8 = new Uint8Array(buf), dv = new DataView(buf);
   if (String.fromCharCode(u8[0], u8[1], u8[2], u8[3]) !== 'NBB1') throw new Error('bad dump magic');
   const headerLen = dv.getUint32(4, true);
   const header = JSON.parse(new TextDecoder().decode(u8.subarray(8, 8 + headerLen)));
-  const bodyOffset = (8 + headerLen + 7) & ~7;   // align(8+headerLen, 8)
+  const bodyOffset = (8 + headerLen + 7) & ~7;
   const L = header.layout;
   const view = (name) => new _CTORD[L[name].type](buf, bodyOffset + L[name].off, L[name].len);
   const dump = {
@@ -23,13 +13,11 @@ export function decodeBinary(buf) {
     v: view('v'), n: view('n'), recOff: view('recOff'),
     q: null, w: null, qb: null, qp: null, po: null,
   };
-  for (const f of header.flags || []) dump[f] = view(f);   // q / w / qb / qp / po
+  for (const f of header.flags || []) dump[f] = view(f);
   for (const [name] of header.cols) dump[name] = view(name);
   return dump;
 }
 
-// Occurrence comparators (most-recent first). Shared with computeRecents so the
-// lazily-rebuilt recent list orders exactly like the old eager one did.
 export const cmpGame = (a, b) =>
   (a[5] < b[5] ? 1 : a[5] > b[5] ? -1 : 0) ||
   (Number(b[4] || 0) - Number(a[4] || 0)) || (b[0] - a[0]);
@@ -37,8 +25,6 @@ export const cmpSeason = (a, b) =>
   (a[2] < b[2] ? 1 : a[2] > b[2] ? -1 : 0) ||
   (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) || (a[0] - b[0]);
 
-// Compare two occurrences by flat recent-index, resolving dict values so the
-// ordering is byte-identical to cmpGame/cmpSeason on the JSON occ arrays.
 export function cmpOcc(d, j, k, game) {
   const D = d.dict;
   if (game) {
@@ -69,9 +55,6 @@ function cellFromRep(d, c, game) {
         m: D.season[d.season[j]] + ' season', g: null, gp: d.gp[j], pid: D.pid[d.pid[j]] };
 }
 
-// A line passes the same filters the JSON path applies, using the encoded
-// flags. Missing-flag semantics match JSON exactly (undefined !== 1 -> skip,
-// !undefined -> true), so a filter with no backing column drops every line.
 export function lineKept(d, i, wlFilter, qual, minGames, poFilter) {
   if (wlFilter != null && (!d.w || d.w[i] !== wlFilter)) return false;
   if (poFilter != null && (!d.po || d.po[i] !== poFilter)) return false;
@@ -80,8 +63,6 @@ export function lineKept(d, i, wlFilter, qual, minGames, poFilter) {
   return true;
 }
 
-// Everything computeRecents needs to reproduce a rollup's exact filtering,
-// built once here so rollup and the lazy recent-list can never disagree.
 export function makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
   const game = dump.mode === 'game';
   const ix = dump.axes.indexOf(x), iy = dump.axes.indexOf(y), iz = dump.axes.indexOf(z);
@@ -93,7 +74,7 @@ export function makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter)
 function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
   const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter);
   const { ix, iy, iz, game, dz0, dz1, dz2 } = ctx;
-  if (ix < 0 || iy < 0 || iz < 0)   // unknown axis -> no cells (matches JSON path)
+  if (ix < 0 || iy < 0 || iz < 0)
     return { axes: { x: { max: 0 }, y: { max: 0 }, z: { max: 0 } }, cells: [], recentCtx: ctx };
   const { v, n, nAxes, N, recOff, vNull } = dump;
   const cells = new Map();
@@ -135,10 +116,6 @@ export function rollupCube(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
     let c = cells.get(key);
     if (!c) { c = { p: vx, r: vy, a: vz, n: 0, top: null }; cells.set(key, c); }
     c.n += ln.n;
-    // Keep only the representative (most-recent) occurrence in one pass. The
-    // full top-5 recent list is rebuilt lazily on click (computeRecents) -- it
-    // was ~73% of this function's cost and is only shown for one clicked cell,
-    // never for a boxscorigami (n===1, whose lone game IS the representative).
     for (const o of ln.r) { if (c.top === null || cmp(o, c.top) < 0) c.top = o; }
   }
   const out = [];

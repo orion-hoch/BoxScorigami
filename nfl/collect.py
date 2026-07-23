@@ -18,7 +18,6 @@ DB_PATH = HERE / "nfl_full.sqlite"
 USER_DATA_DIR = HERE / ".browser_profile"
 
 BASE = "https://www.pro-football-reference.com"
-# Sports Reference blocks above 20 requests/minute; 3.5s leaves headroom.
 DEFAULT_DELAY = 3.5
 CF_CHALLENGE_TIMEOUT = 60
 IMPERSONATE = "chrome"
@@ -152,8 +151,6 @@ class Browser:
 
     def fetch(self, url, retries=2):
         """Navigate, wait for Cloudflare to clear, return HTML."""
-        # ponytail: kept — Chromium leaks memory over a multi-hour scrape; the
-        # periodic restart is the only thing that keeps long runs from dying.
         if self._since_restart >= self._restart_every:
             self._restart()
         for attempt in range(retries + 1):
@@ -417,7 +414,6 @@ BOX_TABLES = {
         "tackles_missed_pct"],
 }
 
-# Split home/visitor tables; these carry pos instead of team.
 SIDE_TABLES = {
     "snap_counts": ["offense", "off_pct", "defense", "def_pct",
                     "special_teams", "st_pct"],

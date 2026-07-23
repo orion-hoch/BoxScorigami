@@ -1,33 +1,12 @@
-// Transcode brotli-JSON dumps (*.json.br) to the columnar binary format
-// (*.bin.br) the client decodes with typed-array views instead of JSON.parse.
-// Used for every sport (see USES_BINARY in public/index.html).
-//
-//   node dump_to_binary.js public/nba/game.json.br public/nba/season.json.br
-//
-// Regeneration pipeline: export_dumps.py writes the *.json.br, then this script
-// converts them. The *.json.br are intermediates and need not be committed.
-//
-// Container:
-//   [0..4)   magic "NBB1"
-//   [4..8)   headerLen (u32 LE)
-//   [8..8+H) header JSON (utf8)
-//   pad to align(8+headerLen, 8)                 <- decoder recomputes this
-//   body     sections back-to-back, each 4-byte aligned; header.layout[name]={off,len,type}
 const { brotliCompressSync, brotliDecompressSync, constants } = require('zlib');
 const fs = require('fs');
 
-// recent-occurrence column spec per mode. idx = position in the JSON occ array.
-// season-avg shares the season shape.
 const SPECS = {
   game:   [['pid','dict',0],['name','dict',1],['team','dict',2],['matchup','dict',3],
            ['gameid','dict',4],['date','dict',5],['wl','i8',6]],
   season: [['pid','dict',0],['name','dict',1],['season','dict',2],['gp','i32',3]],
 };
 SPECS['season-avg'] = SPECS.season;
-// Optional per-line flags the client's filters read: q (min-games, WNBA/NFL),
-// w (W/L, MLB all/p game), qb/qp (qualified batter/pitcher, MLB season),
-// po (playoff game, every sport's game mode). Encoded as Int8 only when a
-// dump actually carries them.
 const LINE_FLAGS = ['q', 'w', 'qb', 'qp', 'po'];
 
 function encodeDump(d) {
@@ -55,8 +34,6 @@ function encodeDump(d) {
     if (kind === 'dict') { dicts[name] = []; dictMap[name] = new Map(); rawIdx[name] = new Int32Array(totalRec); }
     else typed[name] = kind === 'i8' ? new Int8Array(totalRec) : new Int32Array(totalRec);
   }
-  // null is interned as a normal dict entry (some names/matchups/gameids are
-  // null), so it round-trips to JSON null rather than an out-of-range index.
   const intern = (name, s) => {
     const m = dictMap[name]; let i = m.get(s);
     if (i === undefined) { i = dicts[name].length; m.set(s, i); dicts[name].push(s); }
@@ -68,8 +45,6 @@ function encodeDump(d) {
     const l = d.lines[i];
     for (let a = 0; a < nAxes; a++) v[i * nAxes + a] = l.v[a] == null ? vNull : l.v[a];
     n[i] = l.n;
-    // -1 marks a null/absent flag so it can't collide with a real 0 (e.g. a
-    // no-decision game's w=null must not read as an L under a W/L filter).
     for (const f of flags) flagArr[f][i] = l[f] == null ? -1 : l[f];
     recOff[i] = ri;
     for (const o of l.r) {

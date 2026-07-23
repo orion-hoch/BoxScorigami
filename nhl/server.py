@@ -8,14 +8,6 @@ import stats as shared  # noqa: E402
 
 DB_PATH = HERE / "nhl.sqlite"
 
-# Era cutoffs: the API (and the boxscore fallback especially) reports 0 for
-# stats that simply weren't tracked yet, which would flood the cube with fake
-# statlines. First seasons with real (nonzero) data, measured from the db:
-#   sog / plus_minus 1959-60 · shifts / EN goals / goalie splits 1997-98
-#   hits / blocked / giveaways / takeaways / missed shots 2005-06
-# CASE them to NULL below the cutoff. Inside these subqueries `season` on the
-# right-hand side is the raw source integer (20232024); the aliased output
-# `season` is the display string ("2023-24") used by the season dumps.
 SEASON_STR = "(season/10000) || '-' || printf('%02d', season % 100)"
 
 SK_TABLE = f"""(SELECT game_id, game_date, {SEASON_STR} AS season, game_type,
@@ -74,8 +66,6 @@ GOALIES = {
     "es_saves":      {"col": "es_saves",      "label": "EV Saves",      "color": "#8ee27a"},
     "pp_saves":      {"col": "pp_saves",      "label": "PP Saves",      "color": "#5fd5ff"},
     "sh_saves":      {"col": "sh_saves",      "label": "SH Saves",      "color": "#4dd0e1"},
-    # Season SV% is recomputed from summed saves/shots — summing the per-game
-    # scaled ints is meaningless and averaging them over-weights short outings.
     "save_pct":      {"col": "save_pct",      "label": "SV%",           "color": "#f7c948",
                       "scale": 100, "decimals": 2,
                       "season_agg": "CAST(ROUND(100.0 * SUM(saves) / "

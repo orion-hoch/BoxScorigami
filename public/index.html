@@ -2,16 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<!-- Fixed desktop-width layout: phones render the desktop look scaled down
-     and rely on pinch zoom (page) / OrbitControls zoom (cube). -->
 <meta name="viewport" content="width=1200, viewport-fit=cover" />
 <script>
-// Kick the sport's data downloads off NOW, before the module graph below has
-// even started loading. loadStats/getDump/fastDefaultRender claim these
-// promises via takeEarly() instead of fetching again.
 (() => {
-  // Data files are served with max-age=86400; the version param busts that
-  // cache when the dump format changes (must match DUMP_V in the module).
   const V = '?v=2';
   const bases = { nba: 'nba', wnba: 'wnba', nhl: 'nhl/sk', nfl: 'nfl/off', mlb: 'mlb/all' };
   const m = /sport=(\w+)/.exec(location.hash);
@@ -24,9 +17,6 @@
   };
 })();
 </script>
-<!-- The import map MUST precede the modulepreload links: a preloaded module
-     parsed before the map registers (instant on warm-cache reloads) makes the
-     browser reject the map, and `import 'three'` fails page-wide. -->
 <script type="importmap">
 {
   "imports": {
@@ -56,9 +46,6 @@
   #info { top: 12px; left: 12px; min-width: 280px; max-width: 340px;
     max-height: calc(100vh - 24px); overflow-y: auto; overflow-x: hidden; }
   #detail { top: 54px; right: 12px; min-width: 260px; max-width: 320px; display: none; }
-  /* Leaderboard sits on top, the "Made by · BBox" line beneath it, as one
-     bottom-right stack (column-reverse over the status/leaders DOM order).
-     Same grouping on desktop and mobile. */
   #brdock {
     position: absolute; bottom: 12px; right: 12px; z-index: 5;
     display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 8px;
@@ -210,8 +197,6 @@
   }
   .panel-btn:hover { color: #f7c948; border-color: #f7c948; }
   .panel.minimized > *:not(.panel-header) { display: none !important; }
-  /* Minimized = header only: drop the header's bottom margin so the title
-     sits vertically centered (equal 10px panel padding above and below). */
   .panel.minimized .panel-header { margin-bottom: 0; }
 
   .info-icon {
@@ -262,8 +247,6 @@
   #posBar button.active { background:#2a2f36; color:#f7c948; border-color:#3a4049; }
   #posBar .pos-sep { width:1px; align-self:stretch; margin:1px 3px; background:#2a2f36; }
 
-  /* On desktop the dock is invisible to layout, so the panels inside it keep
-     positioning themselves against the viewport exactly as before. */
   #dock, #topdock { display: contents; }
 
 </style>
@@ -451,14 +434,8 @@ function patchMaterial(material) {
         .replace(
           '#include <clipping_planes_fragment>',
           `#include <clipping_planes_fragment>
-           // Face peel: hide voxels whose center is outside the clip slab.
            if (any(lessThan(vCellPos, uClipMin)) ||
                any(greaterThan(vCellPos, uClipMax))) discard;
-           // Corner notches: uNotch[i] is a fraction 0..1 of the span, applied
-           // per-axis, so the notch's inner corner slides along the body
-           // diagonal (corner -> opposite corner) even on anisotropic cubes.
-           // Corner i decode matches CORNER_SIGNS (bit0=x bit1=y bit2=z);
-           // GLSL ES 1.00 has no bit ops, hence mod/floor.
            for (int i = 0; i < 8; i++) {
              if (uNotch[i] <= 0.0) continue;
              vec3 s = vec3(mod(float(i), 2.0),
@@ -504,8 +481,6 @@ function makeLabel(text, color = '#e6e8eb', heightUnits = 14) {
 
 const canvas = document.getElementById('canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-// Touch devices lay out at the fixed 1200px desktop viewport, so DPR 1 is
-// already ~native physical resolution; anything higher tanks the framerate.
 const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
 renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(window.devicePixelRatio, 3));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -523,15 +498,10 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 
-// The old framing used a fixed distance, which only fits a landscape window —
-// in portrait the horizontal frustum is much narrower than the vertical one and
-// the cube spills off both sides. Fit against whichever axis is tighter.
 const VIEW_DIR = new THREE.Vector3(0.9, 0.7, 1.1).normalize();
 function fitDistance(diag) {
   const vHalf = THREE.MathUtils.degToRad(camera.fov) / 2;
   const hHalf = Math.atan(Math.tan(vHalf) * camera.aspect);
-  // Floor of 12 kept from the old framing: axis labels scale off maxDim, so a
-  // small cube framed tightly would push its own labels off screen.
   return (Math.max(diag, 12) / 2) / Math.sin(Math.min(vHalf, hHalf)) * 1.1;
 }
 
@@ -540,8 +510,6 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  // Re-fit only when the orientation actually flips, so a phone rotation doesn't
-  // leave the cube cropped but an ordinary window drag keeps the user's zoom.
   const portrait = window.innerWidth < window.innerHeight;
   if (portrait !== wasPortrait && framedDiag > 0) {
     wasPortrait = portrait;
@@ -639,8 +607,6 @@ function coarsenData(data, k) {
   const cells = [];
   for (const b of bins.values()) {
     const r = b.rep;
-    // Recents are rebuilt lazily on click (computeRecents matches on the
-    // coarsened block), so no per-bin recent list is assembled here.
     cells.push({ p: b.p, r: b.r, a: b.a, n: b.n,
                  d: r.d, pl: r.pl, t: r.t, m: r.m, g: r.g, gp: r.gp, pid: r.pid,
                  sp: r.p, sr: r.r, sa: r.a });
@@ -765,10 +731,6 @@ function buildCube(data, preserveView) {
   controls.update();
   framedDiag = diag;
 
-  // Near-miss detection scans the whole bounding volume, which for wide axes
-  // (e.g. NFL special-teams return yards, 304×207) is ~600k cells and enough
-  // GC churn to crash a memory-tight mobile tab. It's off by default and hidden
-  // anyway, so only pay for it when the toggle is actually on.
   if (document.getElementById('showEnclosed').checked) {
     buildEnclosedMesh();
     if (state.enclosedMesh) state.enclosedMesh.visible = true;
@@ -784,10 +746,6 @@ function buildEnclosedMesh() {
   if (state.enclosedMesh || !state.occupied) return;
   const { MAX_X, MAX_Y, MAX_Z, base, occupied } = state;
 
-  // A near-miss is an empty cell with all 6 neighbors occupied, so it must
-  // border an occupied cell. Scanning the neighbors of occupied cells (~6·|occ|)
-  // instead of the full bounding volume turns a 600k-cell sweep into a ~36k one
-  // for wide axes, with identical results.
   const positions = [];
   const seen = new Set();
   for (const cellKey of occupied.keys()) {
@@ -941,12 +899,7 @@ function pickHandle(event) {
   const hits = raycaster.intersectObjects(state.handlesGroup.children, false);
   if (hits.length) return hits[0].object;
   if (event.pointerType !== 'touch') return null;
-  // A touch square on a voxel is a cell tap, not a sloppy handle grab —
-  // without this the radius below eats every tap near a face or corner.
   if (pick(event)) return null;
-  // Fat finger: grab the nearest handle within ~22 *visual* px of the touch.
-  // Divide by the pinch-zoom scale so the grab radius stays finger-sized in
-  // layout px whether the page is zoomed out to the full 1200px or way in.
   const rect = renderer.domElement.getBoundingClientRect();
   const thr = 22 / ((window.visualViewport && window.visualViewport.scale) || 1);
   let best = null, bestD2 = thr * thr;
@@ -963,8 +916,6 @@ function pickHandle(event) {
 function fmtStat(key, v) {
   const m = STATS_META[key];
   if (m && m.scale) {
-    // power-of-ten scales are rate stats (.284) — others are fractional
-    // counting stats like half-sacks, where 6.0 should read as 6.
     const rate = m.scale % 10 === 0;
     const s = (v / m.scale).toFixed(m.decimals);
     if (!rate) return s.replace(/\.0$/, '');
@@ -983,8 +934,6 @@ function fmtAxis(c) {
   return `${fmtStat(a.x.key, c.p)} ${a.x.label.toLowerCase()} · ${fmtStat(a.y.key, c.r)} ${a.y.label.toLowerCase()} · ${fmtStat(a.z.key, c.a)} ${a.z.label.toLowerCase()}`;
 }
 
-// Bumped on every detail open so a pending async recent-fill knows if the user
-// has since clicked a different cell (or an enclosed cell) and bails.
 let detailToken = 0;
 
 function showDetailForCell(c) {
@@ -1026,23 +975,17 @@ function showDetailForCell(c) {
     ${detailRows}
     <div id="recentSlot"></div>
   `;
-  // Boxscorigamis (n===1) have no recents -- their one game is the header. For
-  // repeated statlines, fill the recent box just after the panel paints so the
-  // click is instant, then cache it on the cell so re-opening is free and the
-  // list is already there when the user expands it.
   if (c.n >= 2) {
     const fill = () => {
-      if (myToken !== detailToken) return;   // a later click owns the panel now
-      // retry empties: a click before the background dump arrives yields [],
-      // which shouldn't stick once recents become computable
+      if (myToken !== detailToken) return;
       if (!c._recent || !c._recent.length) c._recent = computeRecents(c);
       const slot = document.getElementById('recentSlot');
       if (!slot || c._recent.length < 1) return;
       slot.innerHTML = renderRecentBox(c._recent, seasonMode);
       wireRecentToggle();
     };
-    if (c._recent) fill();               // cached -> instant, no reflow delay
-    else setTimeout(fill, 0);            // off the click frame
+    if (c._recent) fill();
+    else setTimeout(fill, 0);
   }
 }
 
@@ -1080,7 +1023,7 @@ function recentRows(recent, seasonMode) {
 }
 function showDetailForEnclosed(p, r, a) {
   detailEl.style.display = 'block';
-  ++detailToken;   // cancel any pending recent-fill from a prior cell click
+  ++detailToken;
   const occ = state.occupied;
   const neighborRows = NEIGHBOR_OFFSETS_6.map(([dp, dr, da]) => {
     const c = occ.get(`${p + dp},${r + dr},${a + da}`);
@@ -1188,7 +1131,6 @@ function endHandleDrag() {
 }
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
-  // Touch has no hover; skip so an orbit drag doesn't raycast every frame.
   if (handleDrag || ev.pointerType === 'touch') return;
   const h = pickHandle(ev);
   if (h) {
@@ -1217,7 +1159,6 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
   if (!ev.isPrimary || !dragStart) return;
   const dx = ev.clientX - dragStart.x, dy = ev.clientY - dragStart.y;
   dragStart = null;
-  // Finger jitter needs more slack than a mouse, and in visual px (see above).
   const thr = ev.pointerType === 'touch'
     ? 12 / ((window.visualViewport && window.visualViewport.scale) || 1) : 4;
   if (dx * dx + dy * dy > thr * thr) return;
@@ -1417,7 +1358,7 @@ document.querySelectorAll('.panel-btn').forEach((btn) => {
 });
 
 document.getElementById('showEnclosed').addEventListener('change', (e) => {
-  if (e.target.checked) buildEnclosedMesh();   // built lazily on first enable
+  if (e.target.checked) buildEnclosedMesh();
   if (state.enclosedMesh) state.enclosedMesh.visible = e.target.checked;
 });
 document.getElementById('peelToggle').addEventListener('click', (e) => {
@@ -1440,7 +1381,6 @@ const SPORTS = {
   nfl:  {
     label: 'NFL',
     defaults: ['rec_yds', 'rec', 'rec_td'],
-    // Each group is its own stat list + tally directory under public/nfl/<key>/.
     groups: [['off', 'Offense'], ['def', 'Defense'], ['st', 'Special Teams']],
     groupDefaults: {
       off: ['rec_yds', 'rec', 'rec_td'],
@@ -1542,24 +1482,16 @@ function boxscoreUrl(cell) {
   }
   return null;
 }
-let SPORT = null;  // set by the first loadSport(), which also guards re-clicks
+let SPORT = null;
 let MODE = 'game';
 let MIN_GAMES = true;
 const HAS_MIN_GAMES = new Set(['nba', 'nfl', 'wnba', 'nhl']);
-// MLB uses the same top-button slot for a playing-time qualifier instead.
 let QUALIFIED = true;
 const HAS_QUALIFIER = new Set(['mlb']);
 const QUALIFIER_TIP = 'Min 150 PA / 50 IP — keeps rate stats off tiny samples';
-// NFL and NHL ship both season rollups (their per-game counts round to mush);
-// NBA/WNBA only have per-game averages, MLB only totals — per-sport convention.
 let SEASON_TOTALS = true;
 const HAS_SEASON_AVG = new Set(['nfl', 'nhl']);
-// Sports whose dumps are the columnar binary format (*.bin.br) rather than
-// brotli-JSON (decoded via typed-array views, no JSON.parse).
 const USES_BINARY = new Set(['nba', 'wnba', 'nfl', 'mlb', 'nhl']);
-// Cache-buster for the data files (served with max-age=86400): bump on any
-// dump format change, or a stale cached dump silently breaks new filters.
-// Must match V in the head's early-fetch script.
 const DUMP_V = '?v=2';
 const STATS_META = {};
 
@@ -1575,8 +1507,6 @@ const MLB_POS_FIELD = [
 ];
 const MLB_FULL_POS = new Set(['all', 'p']);
 
-// Only the rate axes actually on the cube need a qualifier, so a cube of pure
-// counting stats is never filtered.
 function qualDomains(x, y, z) {
   if (!QUALIFIED || MODE !== 'season') return null;
   const d = {};
@@ -1601,7 +1531,6 @@ function poFilterValue() {
   return -1;
 }
 
-
 function computeRecentsColumnar(cell) {
   const ctx = state.recentCtx, { dump, ix, iy, iz, game, wlFilter, qual, minGames, poFilter, dz0, dz1, dz2 } = ctx;
   const { v, nAxes, N, recOff, vNull } = dump, k = COARSE;
@@ -1618,10 +1547,6 @@ function computeRecentsColumnar(cell) {
   return occ.slice(0, 5).map(j => occToRecent(dump, j, game));
 }
 
-// Rebuild one cell's top-5 recent occurrences on demand (click), instead of
-// precomputing them for every cell at load. Rescans the cached dump for the
-// lines that fall in this cell's (coarsened) block, applying the same filters
-// the rollup used. Never called for n===1 cells.
 function computeRecents(cell) {
   const ctx = state.recentCtx;
   if (!ctx) return [];
@@ -1647,13 +1572,10 @@ function computeRecents(cell) {
     : top5.map(o => ({ pl: o[1], d: o[2], gp: o[3], pid: o[0] }));
 }
 
-// MLB splits its dumps by position; the others by stat group (NFL) or not at all.
 function dumpBase() {
   return SPORT === 'mlb' ? `mlb/${POSITION}` : sportBase();
 }
 
-// Claim a fetch the head's early-fetch script started (one use per slot).
-// Its promise resolves null on network error, so callers re-fetch on null.
 function takeEarly(kind, url) {
   const e = window.__early, s = e && e[kind];
   if (!s || s.url !== url) return null;
@@ -1661,12 +1583,6 @@ function takeEarly(kind, url) {
   return s.p;
 }
 
-// Returns a promise and caches it immediately, so a background warm and a
-// user interaction share one download instead of fetching the dump twice.
-// Every sport ships the columnar binary format (decoded via typed-array
-// views, no JSON.parse), served with Content-Encoding: br so the browser
-// inflates it natively. USES_BINARY stays as the switch for local dev
-// against fresh brotli-JSON dumps that haven't been transcoded yet.
 function getDump(quiet) {
   const mode = MODE !== 'season' ? 'game'
     : (HAS_SEASON_AVG.has(SPORT) && !SEASON_TOTALS) ? 'season-avg' : 'season';
@@ -1683,23 +1599,16 @@ function getDump(quiet) {
       if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
       return bin ? decodeBinary(await r.arrayBuffer()) : await r.json();
     })();
-    // a failed load retries on the next call instead of caching the rejection
     p.catch(() => { if (DUMP_CACHE[key] === p) delete DUMP_CACHE[key]; });
     DUMP_CACHE[key] = p;
   }
   return DUMP_CACHE[key];
 }
 
-// Grouped sports (NFL) keep each stat group in its own subdirectory.
 function sportBase() {
   return SPORTS[SPORT].groups ? `${SPORT}/${GROUP}` : SPORT;
 }
 
-// After the default group/position renders, quietly warm its siblings into
-// DUMP_CACHE so switching tabs is instant instead of a fresh download+parse.
-// Sequential and idle-scheduled so it never competes with interaction, cancelled
-// if the user changes sport, and skipped under Data Saver / 2G to spare mobile
-// data. Only the default 'game' mode is warmed; season loads on demand.
 let prefetchRun = 0;
 function prefetchSiblings() {
   const token = ++prefetchRun;
@@ -1714,15 +1623,12 @@ function prefetchSiblings() {
     bases = SPORTS[sport].groups
       .map(([k]) => `${sport}/${k}`).filter(b => b !== `${sport}/${GROUP}`);
   } else return;
-  // The cube renders every frame (orbit damping), so the page is never truly
-  // idle -- give requestIdleCallback a timeout so it still fires between frames,
-  // and space steps out a touch so a big parse can't stack on the render loop.
   const idle = window.requestIdleCallback
     ? (fn => requestIdleCallback(fn, { timeout: 1200 }))
     : (fn => setTimeout(fn, 400));
   let i = 0;
   const step = () => {
-    if (token !== prefetchRun || SPORT !== sport) return;   // superseded
+    if (token !== prefetchRun || SPORT !== sport) return;
     if (i >= bases.length) return;
     const key = `${bases[i++]}/${mode}`;
     if (DUMP_CACHE[key]) return idle(step);
@@ -1750,8 +1656,6 @@ async function loadStats() {
   return stats;
 }
 
-// Every sport now rolls its three axes up from one dump; there are no
-// per-combination tally files left to fetch.
 async function loadTally(x, y, z) {
   const dump = await getDump();
   const wl = (SPORT === 'mlb' && MODE !== 'season' && MLB_FULL_POS.has(POSITION))
@@ -1759,9 +1663,6 @@ async function loadTally(x, y, z) {
   const qual = SPORT === 'mlb' ? qualDomains(x, y, z) : null;
   const minGames = SPORT !== 'mlb' && MODE === 'season'
     && MIN_GAMES && HAS_MIN_GAMES.has(SPORT);
-  // MLB field-position *game* dumps have no playoff rows (per-game fielding
-  // position is regular-season only), so there the toggle is gated exactly
-  // like W/L. Season dumps carry playoff rows for every sport and position.
   const po = (MODE === 'season' || SPORT !== 'mlb' || MLB_FULL_POS.has(POSITION))
     ? poFilterValue() : null;
   const r = rollupCube(dump, x, y, z, wl, qual, minGames, po);
@@ -1775,10 +1676,6 @@ async function loadTally(x, y, z) {
   };
 }
 
-// Precomputed default view (written by build_defaults.mjs with the same
-// rollup.js code): render the cube from the small default.json.br instantly;
-// the full dump streams in the background via getDump(true). Returns false on
-// any mismatch (missing file, non-default axes) and the slow path runs instead.
 async function fastDefaultRender() {
   const [x, y, z] = [axisXEl.value, axisYEl.value, axisZEl.value];
   const url = `${dumpBase()}/default.json.br${DUMP_V}`;
@@ -1792,7 +1689,7 @@ async function fastDefaultRender() {
     const mk = (a) => ({ key: a.key, label: STATS_META[a.key].label,
                          color: STATS_META[a.key].color, max: a.max });
     rawData = { axes: { x: mk(d.axes.x), y: mk(d.axes.y), z: mk(d.axes.z) }, cells: d.cells };
-    state.recentCtx = null;   // recents unlock when the real dump lands
+    state.recentCtx = null;
     renderCube();
     lbHintEl.textContent = `Most Unique ${rawData.axes.x.label}/${rawData.axes.y.label}/${rawData.axes.z.label} Lines`;
     axisHintEl.textContent = `${rawData.axes.x.label} × ${rawData.axes.y.label} × ${rawData.axes.z.label}`;
@@ -1854,8 +1751,6 @@ axisXEl.addEventListener('change', () => { enforceDistinct(0); refresh(); });
 axisYEl.addEventListener('change', () => { enforceDistinct(1); refresh(); });
 axisZEl.addEventListener('change', () => { enforceDistinct(2); refresh(); });
 
-// Re-entrant clicks on a tab used to stack full reloads on top of each other.
-// Ignore a click for the sport already shown, or while one is still loading.
 let sportLoading = false;
 
 async function loadSport(sport) {
@@ -1913,13 +1808,12 @@ async function loadSportInner(sport) {
     if (await fastDefaultRender()) {
       const s = sport;
       getDump(true).then(d => {
-        // enable recent-lists for cells clicked before the full dump arrived
         if (SPORT === s && MODE === 'game' && !state.recentCtx)
           state.recentCtx = makeRecentCtx(d, axisXEl.value, axisYEl.value, axisZEl.value, null, null, false, null);
       }).catch(() => {}).finally(() => prefetchSiblings());
     } else {
       await refresh();
-      prefetchSiblings();   // warm the other groups/positions in the background
+      prefetchSiblings();
     }
   } catch (err) {
     statusEl.textContent = 'ERROR: ' + err.message;
@@ -1942,8 +1836,6 @@ function buildPosBar() {
       + `<button data-wl="W" class="${WL_W ? 'active' : ''}">W</button>`
       + `<button data-wl="L" class="${WL_L ? 'active' : ''}">L</button>`;
   }
-  // MLB field-position *game* dumps have no playoff rows (per-game fielding
-  // position is regular-season only); season dumps cover every position.
   if (MODE === 'season' || MLB_FULL_POS.has(POSITION)) {
     html += '<span class="pos-sep"></span>' + poButtonsHtml();
   }
@@ -1965,15 +1857,12 @@ function buildGroupBar() {
   wirePoButtons(bar);
 }
 
-// NBA/WNBA have no positions or stat groups; their bar is just Reg/Playoffs.
 function buildPoBar() {
   const bar = document.getElementById('posBar');
   bar.innerHTML = poButtonsHtml();
   wirePoButtons(bar);
 }
 
-// Keep the current axes if the new group still has all three; otherwise fall
-// back to that group's defaults, topped up from the head of the list.
 function groupAxisDefaults(stats) {
   const keys = new Set(stats.map(s => s.key));
   const cur = [axisXEl.value, axisYEl.value, axisZEl.value];
@@ -2043,8 +1932,6 @@ document.getElementById('totalsToggle').addEventListener('click', () => {
   refresh();
 });
 
-// The Reg/Playoffs buttons live inside #posBar next to the position/group
-// buttons; each bar builder appends them via poButtonsHtml + wirePoButtons.
 function poButtonsHtml() {
   return `<button data-po="reg" class="${PO_REG ? 'active' : ''}">Regular</button>`
     + `<button data-po="po" class="${PO_PLAYOFF ? 'active' : ''}">Playoffs</button>`;
@@ -2086,8 +1973,6 @@ document.querySelectorAll('#modeToggle button').forEach(b => {
     MODE = b.dataset.mode;
     document.querySelectorAll('#modeToggle button').forEach(x =>
       x.classList.toggle('active', x.dataset.mode === MODE));
-    // Season stat lines are far more granular than single games for the long
-    // MLB/NFL seasons, so default them to a coarser cube.
     setCoarse(MODE === 'season' && (SPORT === 'mlb' || SPORT === 'nfl') ? 5 : 1);
     updateMinGamesToggle();
     if (SPORT === 'mlb') reloadMlbAxes();
@@ -2117,7 +2002,6 @@ document.querySelectorAll('#coarseToggle button').forEach(b => {
     renderCube(true);
   });
 });
-
 
 (async () => {
   const m = /sport=(\w+)/.exec(location.hash);

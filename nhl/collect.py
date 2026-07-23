@@ -34,10 +34,9 @@ API = "https://api-web.nhle.com/v1"
 STATS_API = "https://api.nhle.com/stats/rest/en"
 DEFAULT_DELAY = 0.3
 RETRY_MAX = 3
-GAME_TYPES = (2, 3)  # regular season, playoffs
-FINAL_STATE = 7      # gameStateId in the /en/game index
+GAME_TYPES = (2, 3)
+FINAL_STATE = 7
 
-# (db column, boxscore key) — plain integers straight off the payload.
 SKATER_INTS = [
     ("goals", "goals"), ("assists", "assists"), ("points", "points"),
     ("plus_minus", "plusMinus"), ("pim", "pim"), ("hits", "hits"),
@@ -51,7 +50,6 @@ GOALIE_INTS = [
     ("es_ga", "evenStrengthGoalsAgainst"), ("pp_ga", "powerPlayGoalsAgainst"),
     ("sh_ga", "shorthandedGoalsAgainst"), ("pim", "pim"),
 ]
-# "17/19" saves/shots pairs per strength.
 GOALIE_SPLITS = [
     ("es", "evenStrengthShotsAgainst"), ("pp", "powerPlayShotsAgainst"),
     ("sh", "shorthandedShotsAgainst"),
@@ -61,7 +59,6 @@ META_COLS = ["game_id", "game_date", "season", "game_type", "player_id",
              "player_name", "position", "sweater", "team_abbr", "opponent",
              "matchup", "home"]
 
-# Stats only the batch reports carry (all INTEGER).
 SKATER_EXTRA = [
     "ev_goals", "ev_points", "pp_points", "sh_goals", "sh_points",
     "gw_goals", "ot_goals", "first_goals",
@@ -79,7 +76,6 @@ GOALIE_COLS = (META_COLS + [c for c, _ in GOALIE_INTS] + GOALIE_EXTRA
                + [f"{p}_{s}" for p, _ in GOALIE_SPLITS for s in ("saves", "sa")]
                + ["save_pct", "toi_sec", "starter", "decision"])
 
-# Batch report -> {db column: report field}. Merged per (game_id, player_id).
 SK_REPORTS = [
     ("skater/summary", {
         "player_name": "skaterFullName", "goals": "goals", "assists": "assists",
@@ -120,11 +116,9 @@ GL_REPORTS = [
         "pp_saves": "ppSaves", "pp_sa": "ppShotsAgainst", "pp_ga": "ppGoalsAgainst",
         "sh_saves": "shSaves", "sh_sa": "shShotsAgainst", "sh_ga": "shGoalsAgainst"}),
 ]
-# RTSS-era reports are all zeros before 1997-98 — skip them so untracked stats
-# stay NULL instead of a wall of fake 0s. Tune here if the API backfills.
 REPORT_FROM = {"skater/realtime": 19971998, "skater/timeonice": 19971998,
                "goalie/savesByStrength": 19971998}
-REPORT_CAP = 10_000  # server truncates any response at this many rows
+REPORT_CAP = 10_000
 
 
 def toi_to_sec(s):
@@ -227,8 +221,6 @@ def init_db(conn):
         PRIMARY KEY (season, game_type)
     );
     """)
-    # CREATE IF NOT EXISTS is a no-op on an existing db; add columns introduced
-    # after a table was first created (same pattern as nba/collect.py).
     for table, cols in (("skater_games", SKATER_COLS), ("goalie_games", GOALIE_COLS)):
         have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         for c in cols:
@@ -267,7 +259,6 @@ def get_json(url, params=None, timeout=60):
     raise RuntimeError(f"giving up on {url}: {last}")
 
 
-# ---------------- enumerate ----------------
 def enumerate_games(conn):
     print(f"fetching {STATS_API}/game (all games since 1917, one call) ...")
     games = get_json(f"{STATS_API}/game", timeout=180)["data"]
@@ -284,7 +275,6 @@ def enumerate_games(conn):
           f"-> {n:,} total in queue")
 
 
-# ---------------- scrape ----------------
 def parse_boxscore(d):
     """One boxscore payload -> (skater rows, goalie rows) as dicts."""
     home = (d.get("homeTeam") or {}).get("abbrev")
@@ -324,8 +314,6 @@ def parse_boxscore(d):
     return skaters, goalies
 
 
-# Boxscore rows carry only the boxscore-era columns; batch rows carry
-# everything except sweater.
 BOX_SK_COLS = META_COLS + [c for c, _ in SKATER_INTS] + ["faceoff_pct", "toi_sec"]
 BOX_GL_COLS = (META_COLS + [c for c, _ in GOALIE_INTS]
                + [f"{p}_{s}" for p, _ in GOALIE_SPLITS for s in ("saves", "sa")]
@@ -381,7 +369,6 @@ def scrape(conn, start, end, retry_failed, delay, limit=None):
     print(f"\nDONE. {ok:,} scraped, {fail:,} failed in {(time.time() - t0) / 3600:.1f}h")
 
 
-# ---------------- season-batch ----------------
 def month_windows(start_year):
     """[('YYYY-MM-01', next), ...] covering Aug of the season's start year
     through Jul of the next — every date an NHL season can touch."""
@@ -402,8 +389,6 @@ def fetch_report(report, season, gtype, delay):
     rows = fetch()
     if len(rows) < REPORT_CAP:
         return rows
-    # Response hit the server's row cap — re-pull in month slices, which are
-    # always well under it (biggest NHL month is ~9k skater-game rows).
     out = []
     for d0, d1 in month_windows(season // 10000):
         sub = fetch(f' and gameDate>="{d0}" and gameDate<"{d1}"')
@@ -463,7 +448,7 @@ def season_batch(conn, start, end, force, delay):
                         merge_report(goalies, rows, colmap, season, gtype,
                                      BATCH_GL_COLS, pos_default="G")
                         if report == "goalie/summary":
-                            for r in rows:   # decision from the per-game W/L/O/T counts
+                            for r in rows:
                                 d = ("W" if r.get("wins") else
                                      "L" if r.get("losses") else
                                      "O" if r.get("otLosses") else
@@ -493,7 +478,6 @@ def season_batch(conn, start, end, force, delay):
     print(f"\nDONE in {(time.time() - t0) / 60:.1f}m")
 
 
-# ---------------- backfill-names ----------------
 def backfill_names(conn, delay):
     """Boxscores abbreviate names ("J. Greenway"); the bios report has full ones."""
     seasons = [r[0] for r in conn.execute(
@@ -521,7 +505,6 @@ def backfill_names(conn, delay):
     print(f"done. updated names for {len(rows):,} players.")
 
 
-# ---------------- stats ----------------
 def show_stats(conn):
     q = lambda sql: conn.execute(sql).fetchone()[0]
     total = q("SELECT COUNT(*) FROM games_to_scrape")
