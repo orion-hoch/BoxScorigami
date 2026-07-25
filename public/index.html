@@ -282,6 +282,7 @@
 <canvas id="canvas"></canvas>
 <div id="snipRect"></div>
 <div id="snipDock">
+  <button id="peelToggle" title="Turn Peel on to show the handles. Drag the face spheres to slice inward from any side; drag the corner spheres along the diagonal to carve out a corner. Turn Peel off to hide the handles while keeping the peel effect.">Peel</button>
   <button id="snipToggle" title="Drag a box over the cube to select the stat lines inside it (at any depth). Click without dragging to clear. Scroll to zoom and right-drag to pan while active.">Save and Export</button>
   <button id="snipExport" style="display:none" title="Download every game in the highlighted selection as a CSV">Export</button>
 </div>
@@ -338,10 +339,6 @@
       <label><input type="checkbox" id="hideScorigamis" /> Hide Scorigamis</label>
     </div>
     <label><input type="checkbox" id="hideRepeated" /> Hide Repeated Games</label>
-    <div class="ctl-row" style="justify-content:space-between">
-      <span>Peel<span class="info-icon" data-tip="Turn Peel on to show the handles. Drag the face spheres to slice inward from any side; drag the corner spheres along the diagonal to carve out a corner. Turn Peel off to hide the handles while keeping the peel effect.">?</span></span>
-      <button id="peelToggle" class="filter-toggle">Peel</button>
-    </div>
     <div class="ctl-row">
       <label><input type="checkbox" id="showAxes" checked /> Show Axes</label>
       <label><input type="checkbox" id="showLabels" checked /> Show Labels</label>
@@ -359,21 +356,16 @@
     </div>
   </div>
 
-  <div class="subpanel" id="yearFilterBox">
-    <h2>Year Filter</h2>
+  <div class="subpanel" id="filterBox">
+    <h2>Filters</h2>
     <div style="display:grid;grid-template-columns:1fr 12px 1fr;gap:6px;align-items:center">
-      <input type="number" id="yearFrom" placeholder="From" />
+      <input type="number" id="yearFrom" placeholder="From" title="Filter by most-recent game year" />
       <span style="text-align:center;color:#8b94a0">–</span>
-      <input type="number" id="yearTo" placeholder="To" />
+      <input type="number" id="yearTo" placeholder="To" title="Filter by most-recent game year" />
     </div>
-    <div class="hint" id="yearHint" style="margin-top:6px">Filter by most-recent game year</div>
-  </div>
-
-  <div class="subpanel" id="playerFilterBox">
-    <h2>Player Filter</h2>
-    <input type="text" id="playerFilterInput"
+    <input type="text" id="playerFilterInput" style="margin-top:6px"
            placeholder="Hide a player's scorigamis (type + Enter)" />
-    <div id="playerFilterChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px"></div>
+    <div id="playerFilterChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"></div>
     <button id="playerFilterReverse" class="filter-toggle" title="invert: show only the listed players">Reverse</button>
   </div>
 
@@ -1563,8 +1555,6 @@ function updateYearBounds() {
     fromEl.max = toEl.max = max;
     fromEl.placeholder = String(min);
     toEl.placeholder = String(max);
-    document.getElementById('yearHint').textContent =
-      `data spans ${min}–${max} (most-recent date)`;
   }
 }
 
