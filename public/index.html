@@ -574,6 +574,24 @@ const state = {
 };
 
 let hoverColorRestore = null;
+let selectedCellId = null;
+
+function clearCellSelection() {
+  if (selectedCellId !== null && state.occMesh && state.instanceIndex[selectedCellId]) {
+    const c = state.instanceIndex[selectedCellId];
+    state.occMesh.setColorAt(selectedCellId, c.n === 1 ? COLOR_ONE : COLOR_MANY);
+    state.occMesh.instanceColor.needsUpdate = true;
+  }
+  selectedCellId = null;
+}
+
+function markCellSelected(id) {
+  clearHover();
+  clearCellSelection();
+  selectedCellId = id;
+  state.occMesh.setColorAt(id, COLOR_SNIP);
+  state.occMesh.instanceColor.needsUpdate = true;
+}
 
 function disposeNode(n) {
   if (!n) return;
@@ -598,6 +616,7 @@ function clearCube() {
   state.enclosedIndex = [];
   state.occupied = null;
   hoverColorRestore = null;
+  selectedCellId = null;
 }
 
 function clearHover() {
@@ -1216,8 +1235,11 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
   if (dx * dx + dy * dy > thr * thr) return;
   const hit = pick(ev);
   if (!hit) return;
-  if (hit.object === state.occMesh) showDetailForCell(state.instanceIndex[hit.instanceId]);
-  else if (hit.object === state.enclosedMesh) {
+  if (hit.object === state.occMesh) {
+    markCellSelected(hit.instanceId);
+    showDetailForCell(state.instanceIndex[hit.instanceId]);
+  } else if (hit.object === state.enclosedMesh) {
+    clearCellSelection();
     const e = state.enclosedIndex[hit.instanceId];
     showDetailForEnclosed(e.p, e.r, e.a);
   }
@@ -1296,6 +1318,7 @@ function snipSelect(x0, y0, x1, y1) {
   const mesh = state.occMesh;
   if (!mesh) return;
   clearHover();
+  clearCellSelection();
   snipSelected.clear();
   const rect = renderer.domElement.getBoundingClientRect();
   const hideScor = document.getElementById('hideScorigamis').checked;
@@ -1620,6 +1643,7 @@ document.querySelectorAll('.panel-btn').forEach((btn) => {
     if (!panel) return;
     if (btn.dataset.action === 'close') {
       panel.style.display = 'none';
+      if (btn.dataset.target === 'detail') clearCellSelection();
     } else if (btn.dataset.action === 'minimize') {
       const minimized = panel.classList.toggle('minimized');
       btn.textContent = minimized ? '+' : '−';
