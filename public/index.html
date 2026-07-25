@@ -997,7 +997,7 @@ function showDetailForCell(c) {
     'basketball-reference';
   const linkHtml = url
     ? `<a href="${url}" target="_blank" rel="noopener" style="color:#f7c948">${linkLabel} ↗</a>`
-    : (c.g || '—');
+    : (c.g || '-');
   const seasonMode = MODE === 'season';
   const ax = state.axes;
   const statlineRow = (COARSE > 1 && typeof c.sp === 'number')
@@ -1007,15 +1007,15 @@ function showDetailForCell(c) {
     ? `<div class="row"><span class="k">Games</span><span class="v">${c.gp}</span></div>`
     : '';
   const detailRows = seasonMode ? `
-    <div class="row"><span class="k">Season</span><span class="v">${c.d || '—'}</span></div>
+    <div class="row"><span class="k">Season</span><span class="v">${c.d || '-'}</span></div>
     ${statlineRow}
     <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c)}</span></div>
     ${gamesRow}
   ` : `
-    <div class="row"><span class="k">Most Recent</span><span class="v">${c.d || '—'}</span></div>
+    <div class="row"><span class="k">Most Recent</span><span class="v">${c.d || '-'}</span></div>
     ${statlineRow}
     <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c, c.t ? ' (' + c.t + ')' : '')}</span></div>
-    <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '—'}</span></div>
+    <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '-'}</span></div>
     ${(c.w === 1 || c.w === 0) ? `<div class="row"><span class="k">Decision</span><span class="v">${c.w === 1 ? 'Won' : 'Lost'}</span></div>` : ''}
     <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
@@ -1068,8 +1068,8 @@ function recentRows(recent, seasonMode) {
     const url = seasonMode ? playerLinkUrl(e) : boxscoreUrl(e);
     const link = url
       ? `<a href="${url}" target="_blank" rel="noopener">[link]</a>`
-      : '—';
-    return `<div class="recentRow"><span class="nm">${e.pl || 'Unknown'}</span><span class="dt">${e.d || '—'}</span><span class="ln">${link}</span></div>`;
+      : '-';
+    return `<div class="recentRow"><span class="nm">${e.pl || 'Unknown'}</span><span class="dt">${e.d || '-'}</span><span class="ln">${link}</span></div>`;
   }).join('');
 }
 function showDetailForEnclosed(p, r, a) {
@@ -1084,7 +1084,7 @@ function showDetailForEnclosed(p, r, a) {
   }).join('');
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis({ p, r, a })}</div>
-    <div class="empty">Near Miss — never recorded, but surrounded on all 6 sides</div>
+    <div class="empty">Near Miss: never recorded, but surrounded on all 6 sides</div>
     ${neighborRows}
   `;
 }
@@ -1451,14 +1451,16 @@ function isCellFiltered(c, hideScor, hideRep, yr, axf) {
     if (yr.min !== null && yyyy < yr.min) return true;
     if (yr.max !== null && yyyy > yr.max) return true;
   }
-  if (axf) {
-    const k = COARSE, coords = [c.p, c.r, c.a];
-    for (let i = 0; i < 3; i++) {
-      const f = axf[i];
-      if (!f) continue;
-      const lo = coords[i] * k, hi = lo + k - 1;  // fine-value range this (possibly coarse) cell covers
-      if (f.sign === '≥' ? hi < f.v : f.sign === '≤' ? lo > f.v : (f.v < lo || f.v > hi)) return true;
-    }
+  return !!axf && axisFiltered(c, axf);
+}
+
+function axisFiltered(c, axf) {
+  const k = COARSE, coords = [c.p, c.r, c.a];
+  for (let i = 0; i < 3; i++) {
+    const f = axf[i];
+    if (!f) continue;
+    const lo = coords[i] * k, hi = lo + k - 1;  // fine-value range this (possibly coarse) cell covers
+    if (f.sign === '≥' ? hi < f.v : f.sign === '≤' ? lo > f.v : (f.v < lo || f.v > hi)) return true;
   }
   return false;
 }
@@ -1484,6 +1486,21 @@ function applyVisibilityFilters() {
     }
   }
   mesh.instanceMatrix.needsUpdate = true;
+  // near misses only carry coordinates, so the axis filters are the ones that apply
+  if (state.enclosedMesh) {
+    const em = state.enclosedMesh;
+    for (let i = 0; i < state.enclosedIndex.length; i++) {
+      const c = state.enclosedIndex[i];
+      if (axf && axisFiltered(c, axf)) {
+        em.setMatrixAt(i, HIDE_MATRIX);
+      } else {
+        dummy.position.set(c.p - b.x, c.r - b.y, c.a - b.z);
+        dummy.updateMatrix();
+        em.setMatrixAt(i, dummy.matrix);
+      }
+    }
+    em.instanceMatrix.needsUpdate = true;
+  }
   recomputeLeaderboard();
 }
 
@@ -1612,7 +1629,7 @@ document.querySelectorAll('.panel-btn').forEach((btn) => {
 });
 
 document.getElementById('showEnclosed').addEventListener('change', (e) => {
-  if (e.target.checked) buildEnclosedMesh();
+  if (e.target.checked) { buildEnclosedMesh(); applyVisibilityFilters(); }
   if (state.enclosedMesh) state.enclosedMesh.visible = e.target.checked;
 });
 document.getElementById('peelToggle').addEventListener('click', (e) => {
@@ -1742,7 +1759,7 @@ let MIN_GAMES = true;
 const HAS_MIN_GAMES = new Set(['nba', 'nfl', 'wnba', 'nhl']);
 let QUALIFIED = true;
 const HAS_QUALIFIER = new Set(['mlb']);
-const QUALIFIER_TIP = 'Min 150 PA / 50 IP — keeps rate stats off tiny samples';
+const QUALIFIER_TIP = 'Min 150 PA / 50 IP, keeps rate stats off tiny samples';
 let SEASON_TOTALS = true;
 const HAS_SEASON_AVG = new Set(['nfl', 'nhl']);
 const USES_BINARY = new Set(['nba', 'wnba', 'nfl', 'mlb', 'nhl']);

@@ -34,7 +34,7 @@ SPORTS = {
              "po": "season_type = 'Playoffs'", "po_min_gp": 5},
     "nfl":  {"db": "nfl/nfl_full.sqlite",  "pid": "player_pfr_id",
              "where": "game_type = 'REG'",              "min_gp": 6,
-             "clamp": True, "po": "game_type = 'POST'", "po_min_gp": 2,
+             "po": "game_type = 'POST'", "po_min_gp": 2,
              "season_modes": [("season", "SUM({col})"), ("season-avg", None)]},
     "nhl":  {"db": "nhl/nhl.sqlite",       "pid": "player_id",
              "where": "game_type = 2",                  "min_gp": 20,
@@ -67,11 +67,10 @@ def build_season_avg(conn, stats, sanity, pid, where, table, dest,
 
 
 def emit(conn, dest_dir, mode, stats, *, table, sanity, pid, where, min_gp,
-         matchup="matchup", clamp=False, po=None, po_min_gp=None):
+         matchup="matchup", po=None, po_min_gp=None):
     keys = list(stats)
     if mode == "game":
-        col = (lambda c: f"MAX({c}, 0)") if clamp else (lambda c: c)
-        sel = ", ".join(f"{col(s['col'])} AS {k}" for k, s in stats.items())
+        sel = ", ".join(f"{s['col']} AS {k}" for k, s in stats.items())
         mu = f"{matchup} AS matchup" if matchup else "NULL AS matchup"
         extra = (f"{pid} AS pid, player_name, team_abbr, {mu}, "
                  f"game_id, game_date")
@@ -179,8 +178,7 @@ def main():
                               sanity=sanity, pid=cfg["pid"],
                               where=cfg["where"], min_gp=cfg["min_gp"],
                               matchup=matchup if mode == "game" else None,
-                              clamp=cfg.get("clamp", False), po=cfg["po"],
-                              po_min_gp=cfg["po_min_gp"])
+                              po=cfg["po"], po_min_gp=cfg["po_min_gp"])
             print(f"  {mode:6} {n:>9,} lines  {raw/1e6:7.1f} MB raw "
                   f"-> {gz/1e6:5.1f} MB gz")
     print(f"\nDONE in {(time.time()-t0)/60:.1f}m")

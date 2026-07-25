@@ -138,7 +138,7 @@ def open_db():
 def compute_payload(x, y, z, group="off") -> str:
     g = GROUPS[group]
     return shared.compute_payload(DB_PATH, g["stats"], g["sanity"], x, y, z,
-                                  clamp=True, pid_col="player_pfr_id",
+                                  pid_col="player_pfr_id",
                                   legacy_max=True,
                                   table=g["table"], matchup=g["matchup"])
 
