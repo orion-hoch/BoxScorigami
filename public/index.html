@@ -85,11 +85,23 @@
   body.sport-nfl #coarseToggle .hi-k,
   body.sport-nhl #coarseToggle .hi-k { display: block; }
   #axisGrid {
-    display: grid; grid-template-columns: 24px 1fr; gap: 5px 8px; align-items: center;
+    display: grid; grid-template-columns: 24px 1fr auto 52px; gap: 5px 6px; align-items: center;
     margin-top: 6px; padding: 6px 9px;
     background: rgba(0,0,0,0.18); border: 2px solid #3a4150; border-radius: 6px;
   }
   #axisGrid .lab { font-weight: 600; font-variant-numeric: tabular-nums; color: #8b94a0; }
+  .axf-sign {
+    background: transparent; color: #f7c948; border: 1px solid #2a2f36; border-radius: 2px;
+    padding: 2px 6px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .axf-sign:hover { border-color: #5a6170; }
+  .axf-val {
+    width: 100%; box-sizing: border-box;
+    background: transparent; color: #e6e8eb; border: 1px solid #2a2f36; border-radius: 2px;
+    padding: 2px 5px; font-size: 12px; font-family: inherit; font-variant-numeric: tabular-nums;
+  }
+  .axf-val:focus { outline: none; border-color: #f7c948; }
+  .axf-val::-webkit-outer-spin-button, .axf-val::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
   .subpanel {
     margin-top: 8px; padding: 8px 10px;
@@ -225,6 +237,21 @@
   }
   .filter-toggle:hover { color: #e6e8eb; border-color: #5a6170; }
   .filter-toggle.active { background: #2a2f36; color: #f7c948; border-color: #f7c948; }
+  #snipRect { position: fixed; border: 1.5px dashed #f7c948; background: rgba(247,201,72,.08);
+              border-radius: 2px; pointer-events: none; display: none; z-index: 50; }
+  #snipDock {
+    position: absolute; bottom: 12px; left: 12px;
+    display: flex; gap: 4px;
+    background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
+    padding: 4px; backdrop-filter: blur(6px); z-index: 10;
+  }
+  #snipDock button {
+    background: transparent; color: #8b94a0; border: 0;
+    padding: 5px 16px; font-size: 12px; font-weight: 700;
+    border-radius: 5px; cursor: pointer; letter-spacing: .03em; font-family: inherit;
+  }
+  #snipDock button:hover { color: #e6e8eb; }
+  #snipDock button.active, #snipDock #snipExport { background: #2a2f36; color: #f7c948; }
 
   .chip {
     display: inline-flex; align-items: center; gap: 4px;
@@ -253,6 +280,11 @@
 </head>
 <body>
 <canvas id="canvas"></canvas>
+<div id="snipRect"></div>
+<div id="snipDock">
+  <button id="snipToggle" title="Drag a box over the cube to select the stat lines inside it (at any depth). Click without dragging to clear. Scroll to zoom and right-drag to pan while active.">Save and Export</button>
+  <button id="snipExport" style="display:none" title="Download every game in the highlighted selection as a CSV">Export</button>
+</div>
 
 <div id="topdock">
 <div id="tabs">
@@ -284,8 +316,14 @@
 
   <div id="axisGrid">
     <span class="lab">X</span><select id="axisX"></select>
+    <button class="axf-sign" data-axis="x" title="Click to cycle: at least / at most / exactly">≥</button>
+    <input class="axf-val" data-axis="x" type="number" title="Filter this axis (empty = off)" />
     <span class="lab">Y</span><select id="axisY"></select>
+    <button class="axf-sign" data-axis="y" title="Click to cycle: at least / at most / exactly">≥</button>
+    <input class="axf-val" data-axis="y" type="number" title="Filter this axis (empty = off)" />
     <span class="lab">Z</span><select id="axisZ"></select>
+    <button class="axf-sign" data-axis="z" title="Click to cycle: at least / at most / exactly">≥</button>
+    <input class="axf-val" data-axis="z" type="number" title="Filter this axis (empty = off)" />
   </div>
 
   <div id="legend">
@@ -339,7 +377,6 @@
     <button id="playerFilterReverse" class="filter-toggle" title="invert: show only the listed players">Reverse</button>
   </div>
 
-  <div class="hint" style="margin-top:10px">Drag = orbit · Scroll = zoom · Right-drag = pan · Click a cell · Drag spheres = peel</div>
 </div>
 
 <div id="detail" class="panel">
@@ -373,6 +410,7 @@ const COLOR_ONE      = new THREE.Color(0xe53935);
 const COLOR_MANY     = new THREE.Color(0x43a047);
 const COLOR_ENCLOSED = new THREE.Color(0x4dd0e1);
 const COLOR_HOVER    = new THREE.Color(0xfff3a0);
+const COLOR_SNIP     = new THREE.Color(0xf7c948);
 
 const NEIGHBOR_OFFSETS_6 = [
   [ 1, 0, 0], [-1, 0, 0],
@@ -584,6 +622,7 @@ function setHover(mesh, id) {
 let COARSE = 1;
 let rawData = null;
 let framedDiag = 0;
+const framedCenter = new THREE.Vector3();
 
 function repBetter(c, cur) {
   if (!cur) return true;
@@ -637,6 +676,12 @@ function buildCube(data, preserveView) {
   }
   const base = { x: minP, y: minR, z: minA };
   state.base = base;
+
+  // axis filters: reset on a real data change, keep across coarse switches; hint the axis min
+  if (!preserveView) document.querySelectorAll('.axf-val').forEach(el => { el.value = ''; });
+  for (const a of ['x', 'y', 'z'])
+    document.querySelector(`.axf-val[data-axis="${a}"]`).placeholder =
+      fmtStat(axes[a].key, base[a] * COARSE);
   const MAX_X = axes.x.max - base.x, MAX_Y = axes.y.max - base.y, MAX_Z = axes.z.max - base.z;
   state.MAX_X = MAX_X; state.MAX_Y = MAX_Y; state.MAX_Z = MAX_Z;
 
@@ -720,9 +765,12 @@ function buildCube(data, preserveView) {
   const cx = MAX_X / 2, cy = MAX_Y / 2, cz = MAX_Z / 2;
   const diag = Math.sqrt(MAX_X * MAX_X + MAX_Y * MAX_Y + MAX_Z * MAX_Z);
   if (preserveView && framedDiag > 0) {
-    const offset = camera.position.clone().sub(controls.target).multiplyScalar(diag / framedDiag);
-    controls.target.set(cx, cy, cz);
-    camera.position.set(cx + offset.x, cy + offset.y, cz + offset.z);
+    const s = diag / framedDiag;
+    const offset = camera.position.clone().sub(controls.target).multiplyScalar(s);
+    // keep the pan target at the same relative spot in the (rescaled) cube
+    const tRel = controls.target.clone().sub(framedCenter).multiplyScalar(s);
+    controls.target.set(cx + tRel.x, cy + tRel.y, cz + tRel.z);
+    camera.position.copy(controls.target).add(offset);
   } else {
     controls.target.set(cx, cy, cz);
     camera.position.set(cx, cy, cz).add(VIEW_DIR.clone().multiplyScalar(fitDistance(diag)));
@@ -730,6 +778,7 @@ function buildCube(data, preserveView) {
   camera.lookAt(controls.target);
   controls.update();
   framedDiag = diag;
+  framedCenter.set(cx, cy, cz);
 
   if (document.getElementById('showEnclosed').checked) {
     buildEnclosedMesh();
@@ -788,7 +837,9 @@ const HANDLE_COLOR = 0xf7c948;
 const HANDLE_HOVER = 0xffffff;
 
 function buildPeelHandles(maxDim) {
-  const handleSize = Math.min(6, Math.max(0.8, maxDim * 0.05));
+  // size the handle for the 1×-equivalent cube, then convert to coarse units so its
+  // on-screen size never changes with coarseness
+  const handleSize = Math.min(6, Math.max(0.8, maxDim * COARSE * 0.05)) / COARSE;
   state.handleSize = handleSize;
   const group = new THREE.Group();
   group.name = 'peelHandles';
@@ -1131,7 +1182,7 @@ function endHandleDrag() {
 }
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
-  if (handleDrag || ev.pointerType === 'touch') return;
+  if (snipOn || handleDrag || ev.pointerType === 'touch') return;
   const h = pickHandle(ev);
   if (h) {
     clearHover();
@@ -1149,6 +1200,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 let dragStart = null;
 renderer.domElement.addEventListener('pointerdown', (ev) => {
   if (!ev.isPrimary) return;
+  if (snipOn) { if (ev.button === 0) beginSnipDrag(ev); return; }
   if (ev.button === 0) {
     const h = pickHandle(ev);
     if (h) { beginHandleDrag(h, ev); return; }
@@ -1168,6 +1220,181 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
   else if (hit.object === state.enclosedMesh) {
     const e = state.enclosedIndex[hit.instanceId];
     showDetailForEnclosed(e.p, e.r, e.a);
+  }
+});
+
+// ---- Snip: rectangle highlighter + CSV export ----
+const snipToggleEl = document.getElementById('snipToggle');
+const snipExportEl = document.getElementById('snipExport');
+const snipRectEl = document.getElementById('snipRect');
+let snipOn = false;
+let snipDrag = null;
+const snipSelected = new Set();
+
+function updateSnipUI() {
+  snipExportEl.style.display = snipSelected.size ? '' : 'none';
+  snipExportEl.textContent = `Export ${snipSelected.size}`;
+}
+
+function snipClear() {
+  if (snipSelected.size && state.occMesh) {
+    for (const i of snipSelected) {
+      const c = state.instanceIndex[i];
+      if (c) state.occMesh.setColorAt(i, c.n === 1 ? COLOR_ONE : COLOR_MANY);
+    }
+    state.occMesh.instanceColor.needsUpdate = true;
+  }
+  snipSelected.clear();
+  updateSnipUI();
+}
+
+snipToggleEl.addEventListener('click', () => {
+  snipOn = !snipOn;
+  snipToggleEl.classList.toggle('active', snipOn);
+  controls.enableRotate = !snipOn;  // left-drag draws the box; zoom + right-drag pan stay live
+  renderer.domElement.style.cursor = snipOn ? 'crosshair' : 'default';
+  if (!snipOn) snipClear();
+});
+
+function snipBox(ev) {
+  return { x0: Math.min(snipDrag.x, ev.clientX), x1: Math.max(snipDrag.x, ev.clientX),
+           y0: Math.min(snipDrag.y, ev.clientY), y1: Math.max(snipDrag.y, ev.clientY) };
+}
+
+function beginSnipDrag(ev) {
+  snipDrag = { x: ev.clientX, y: ev.clientY };
+  window.addEventListener('pointermove', onSnipDragMove);
+  window.addEventListener('pointerup', endSnipDrag);
+  window.addEventListener('pointercancel', cancelSnipDrag);
+}
+
+function onSnipDragMove(ev) {
+  const { x0, y0, x1, y1 } = snipBox(ev);
+  snipRectEl.style.display = 'block';
+  snipRectEl.style.left = x0 + 'px';
+  snipRectEl.style.top = y0 + 'px';
+  snipRectEl.style.width = (x1 - x0) + 'px';
+  snipRectEl.style.height = (y1 - y0) + 'px';
+}
+
+function cancelSnipDrag() {
+  window.removeEventListener('pointermove', onSnipDragMove);
+  window.removeEventListener('pointerup', endSnipDrag);
+  window.removeEventListener('pointercancel', cancelSnipDrag);
+  snipRectEl.style.display = 'none';
+  snipDrag = null;
+}
+
+function endSnipDrag(ev) {
+  const { x0, y0, x1, y1 } = snipBox(ev);
+  cancelSnipDrag();
+  if (x1 - x0 < 4 && y1 - y0 < 4) { snipClear(); return; }  // plain click clears
+  snipSelect(x0, y0, x1, y1);
+}
+
+function snipSelect(x0, y0, x1, y1) {
+  const mesh = state.occMesh;
+  if (!mesh) return;
+  clearHover();
+  snipSelected.clear();
+  const rect = renderer.domElement.getBoundingClientRect();
+  const hideScor = document.getElementById('hideScorigamis').checked;
+  const hideRep = document.getElementById('hideRepeated').checked;
+  const yr = getYearRange();
+  const axf = getAxisFilters();
+  const b = state.base, v = new THREE.Vector3();
+  for (let i = 0; i < state.instanceIndex.length; i++) {
+    const c = state.instanceIndex[i];
+    if (isCellFiltered(c, hideScor, hideRep, yr, axf)) continue;
+    const wx = c.p - b.x, wy = c.r - b.y, wz = c.a - b.z;
+    if (isPeeledRC(wx, wy, wz)) continue;
+    v.set(wx, wy, wz).project(camera);
+    if (v.z > 1) continue;
+    const sx = (v.x + 1) / 2 * rect.width + rect.left;
+    const sy = (1 - v.y) / 2 * rect.height + rect.top;
+    if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) snipSelected.add(i);
+  }
+  for (let i = 0; i < state.instanceIndex.length; i++) {
+    const c = state.instanceIndex[i];
+    mesh.setColorAt(i, snipSelected.has(i) ? COLOR_SNIP : (c.n === 1 ? COLOR_ONE : COLOR_MANY));
+  }
+  mesh.instanceColor.needsUpdate = true;
+  updateSnipUI();
+}
+
+function collectRowsInCells(keys) {
+  const ctx = state.recentCtx, k = COARSE, ax = state.axes;
+  const { dump, ix, iy, iz, game, wlFilter, qual, minGames, poFilter, dz0, dz1, dz2 } = ctx;
+  const header = game
+    ? ['Player', 'Date', 'Team', 'Matchup', 'W/L', ax.x.label, ax.y.label, ax.z.label]
+    : ['Player', 'Season', 'GP', ax.x.label, ax.y.label, ax.z.label];
+  const rows = [];
+  const push = (o, vx, vy, vz) => {
+    const stats = [fmtStat(ax.x.key, vx), fmtStat(ax.y.key, vy), fmtStat(ax.z.key, vz)];
+    rows.push(game
+      ? [o.pl, o.d, o.t ?? '', o.m ?? '', o.w === 1 ? 'W' : o.w === 0 ? 'L' : '', ...stats]
+      : [o.pl, o.d, o.gp ?? '', ...stats]);
+  };
+  const inCell = (vx, vy, vz) =>
+    keys.has(Math.floor(vx / k) + ',' + Math.floor(vy / k) + ',' + Math.floor(vz / k));
+  if (ctx.columnar) {
+    const { v, nAxes, N, recOff, vNull } = dump;
+    for (let i = 0; i < N; i++) {
+      if (!lineKept(dump, i, wlFilter, qual, minGames, poFilter)) continue;
+      const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
+      if (vx === vNull || vy === vNull || vz === vNull) continue;
+      if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
+      if (!inCell(vx, vy, vz)) continue;
+      for (let j = recOff[i], e = recOff[i + 1]; j < e; j++)
+        push(occToRecent(dump, j, game), vx, vy, vz);
+    }
+  } else {
+    for (const ln of dump.lines) {
+      if (wlFilter != null && ln.w !== wlFilter) continue;
+      if (poFilter != null && ln.po !== poFilter) continue;
+      if (qual && ((qual.bat && !ln.qb) || (qual.pit && !ln.qp))) continue;
+      if (minGames && ln.q !== 1) continue;
+      const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];
+      if (vx == null || vy == null || vz == null) continue;
+      if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
+      if (!inCell(vx, vy, vz)) continue;
+      for (const o of ln.r)
+        push(game ? { pl: o[1], d: o[5], t: o[2], m: o[3], w: o[6] }
+                  : { pl: o[1], d: o[2], gp: o[3] }, vx, vy, vz);
+    }
+  }
+  return { header, rows };
+}
+
+snipExportEl.addEventListener('click', async () => {
+  if (!snipSelected.size) return;
+  const keys = new Set();
+  for (const i of snipSelected) {
+    const c = state.instanceIndex[i];
+    if (c) keys.add(c.p + ',' + c.r + ',' + c.a);
+  }
+  snipExportEl.disabled = true;
+  statusEl.textContent = 'exporting…';
+  try {
+    if (!state.recentCtx) await loadTally(axisXEl.value, axisYEl.value, axisZEl.value);
+    const { header, rows } = collectRowsInCells(keys);
+    if (!rows.length) { statusEl.textContent = 'nothing to export'; return; }
+    const esc = (s) => {
+      s = String(s ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [header, ...rows].map(r => r.map(esc).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = `boxscorigami_${state.axes.x.key}_${state.axes.y.key}_${state.axes.z.key}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    statusEl.textContent = `exported ${rows.length} row${rows.length === 1 ? '' : 's'}`;
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = 'export failed';
+  } finally {
+    snipExportEl.disabled = false;
   }
 });
 
@@ -1205,26 +1432,50 @@ function getYearRange() {
            max: Number.isFinite(toV) ? toV : null };
 }
 
+function getAxisFilters() {
+  const out = [];
+  for (const a of ['x', 'y', 'z']) {
+    const raw = parseFloat(document.querySelector(`.axf-val[data-axis="${a}"]`).value);
+    if (isNaN(raw)) { out.push(null); continue; }
+    const m = STATS_META[state.axes?.[a]?.key];
+    out.push({ sign: document.querySelector(`.axf-sign[data-axis="${a}"]`).textContent,
+               v: m && m.scale ? Math.round(raw * m.scale) : raw });
+  }
+  return (out[0] || out[1] || out[2]) ? out : null;
+}
+
+function isCellFiltered(c, hideScor, hideRep, yr, axf) {
+  if ((hideScor && c.n === 1) || (hideRep && c.n >= 2) || isPlayerBlocked(c)) return true;
+  if ((yr.min !== null || yr.max !== null) && c.d) {
+    const yyyy = parseInt(c.d.slice(0, 4), 10);
+    if (yr.min !== null && yyyy < yr.min) return true;
+    if (yr.max !== null && yyyy > yr.max) return true;
+  }
+  if (axf) {
+    const k = COARSE, coords = [c.p, c.r, c.a];
+    for (let i = 0; i < 3; i++) {
+      const f = axf[i];
+      if (!f) continue;
+      const lo = coords[i] * k, hi = lo + k - 1;  // fine-value range this (possibly coarse) cell covers
+      if (f.sign === '≥' ? hi < f.v : f.sign === '≤' ? lo > f.v : (f.v < lo || f.v > hi)) return true;
+    }
+  }
+  return false;
+}
+
 function applyVisibilityFilters() {
   const mesh = state.occMesh;
   if (!mesh) return;
+  snipClear();
   const hideScor = document.getElementById('hideScorigamis').checked;
   const hideRep = document.getElementById('hideRepeated').checked;
   const yr = getYearRange();
+  const axf = getAxisFilters();
   const b = state.base;
   const dummy = new THREE.Object3D();
   for (let i = 0; i < state.instanceIndex.length; i++) {
     const c = state.instanceIndex[i];
-    const playerBlocked = isPlayerBlocked(c);
-    let yearBlocked = false;
-    if ((yr.min !== null || yr.max !== null) && c.d) {
-      const yyyy = parseInt(c.d.slice(0, 4), 10);
-      if (yr.min !== null && yyyy < yr.min) yearBlocked = true;
-      if (yr.max !== null && yyyy > yr.max) yearBlocked = true;
-    }
-    const blocked = (hideScor && c.n === 1) || (hideRep && c.n >= 2) ||
-                    playerBlocked || yearBlocked;
-    if (blocked) {
+    if (isCellFiltered(c, hideScor, hideRep, yr, axf)) {
       mesh.setMatrixAt(i, HIDE_MATRIX);
     } else {
       dummy.position.set(c.p - b.x, c.r - b.y, c.a - b.z);
@@ -1239,15 +1490,11 @@ function applyVisibilityFilters() {
 function recomputeLeaderboard() {
   if (!state.instanceIndex || !state.instanceIndex.length) return;
   const yr = getYearRange();
+  const axf = getAxisFilters();
   const counts = new Map();
   for (const c of state.instanceIndex) {
     if (c.n !== 1 || !c.pl) continue;
-    if ((yr.min !== null || yr.max !== null) && c.d) {
-      const yyyy = parseInt(c.d.slice(0, 4), 10);
-      if (yr.min !== null && yyyy < yr.min) continue;
-      if (yr.max !== null && yyyy > yr.max) continue;
-    }
-    if (isPlayerBlocked(c)) continue;
+    if (isCellFiltered(c, false, false, yr, axf)) continue;
     counts.set(c.pl, (counts.get(c.pl) || 0) + 1);
   }
   const sorted = [...counts.entries()]
@@ -1310,6 +1557,13 @@ document.getElementById('playerFilterReverse').addEventListener('click', (e) => 
 
 document.getElementById('yearFrom').addEventListener('input', applyVisibilityFilters);
 document.getElementById('yearTo').addEventListener('input', applyVisibilityFilters);
+document.querySelectorAll('.axf-val').forEach(el =>
+  el.addEventListener('input', applyVisibilityFilters));
+document.querySelectorAll('.axf-sign').forEach(b =>
+  b.addEventListener('click', () => {
+    b.textContent = b.textContent === '≥' ? '≤' : b.textContent === '≤' ? '=' : '≥';
+    applyVisibilityFilters();
+  }));
 
 const playerFilterInputEl = document.getElementById('playerFilterInput');
 playerFilterInputEl.addEventListener('keydown', (ev) => {
