@@ -1025,8 +1025,8 @@ function showDetailForCell(c) {
   ` : `
     <div class="row"><span class="k">Most Recent</span><span class="v">${c.d || '-'}</span></div>
     ${statlineRow}
-    <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c, c.t ? ' (' + c.t + ')' : '')}</span></div>
-    <div class="row"><span class="k">Matchup</span><span class="v">${c.m || '-'}</span></div>
+    <div class="row"><span class="k">Player</span><span class="v">${playerHtml(c, c.t ? ' (' + dispAbbr(c.t) + ')' : '')}</span></div>
+    <div class="row"><span class="k">Matchup</span><span class="v">${dispMatchup(c.m) || '-'}</span></div>
     ${(c.w === 1 || c.w === 0) ? `<div class="row"><span class="k">Decision</span><span class="v">${c.w === 1 ? 'Won' : 'Lost'}</span></div>` : ''}
     <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
@@ -1347,7 +1347,7 @@ function collectRowsInCells(keys) {
   const push = (o, vx, vy, vz) => {
     const stats = [fmtStat(ax.x.key, vx), fmtStat(ax.y.key, vy), fmtStat(ax.z.key, vz)];
     rows.push(game
-      ? [o.pl, o.d, o.t ?? '', o.m ?? '', o.w === 1 ? 'W' : o.w === 0 ? 'L' : '', ...stats]
+      ? [o.pl, o.d, dispAbbr(o.t) ?? '', dispMatchup(o.m) ?? '', o.w === 1 ? 'W' : o.w === 0 ? 'L' : '', ...stats]
       : [o.pl, o.d, o.gp ?? '', ...stats]);
   };
   const inCell = (vx, vy, vz) =>
@@ -1686,8 +1686,22 @@ const SPORTS = {
   },
 };
 
-const NBA_TO_BBR_TEAM = { BKN: 'BRK', CHA: 'CHO', PHX: 'PHO' };
-const WNBA_TO_BBR_TEAM = { SAN: 'SAS', PHX: 'PHO' };
+const NBA_TO_BBR_TEAM = {
+  BKN: 'BRK', PHX: 'PHO', GOS: 'GSW', SAN: 'SAS', UTH: 'UTA',
+  PHL: 'PHI', MIH: 'MLH', BAL: 'BLB', BLT: 'BAL',
+};
+// Same NBA-API abbr, different BBR code depending on era.
+const NBA_BBR_ERA = {
+  CHA: [['2014-07', 'CHA'], ['9999', 'CHO']],   // Bobcats vs Hornets
+  WAS: [['1997-07', 'WSB'], ['9999', 'WAS']],   // Bullets vs Wizards
+  KCK: [['1975-07', 'KCO'], ['9999', 'KCK']],   // KC-Omaha vs KC Kings
+};
+const WNBA_TO_BBR_TEAM = { SAN: 'SAS', PHX: 'PHO', PDX: 'POR' };
+// stats.nba.com uses legacy codes for the same franchise pre-1996-97; show the modern ones.
+const NBA_LEGACY_ABBR = { GOS: 'GSW', PHL: 'PHI', SAN: 'SAS', UTH: 'UTA', BLT: 'BAL' };
+const dispAbbr = a => (SPORT === 'nba' && a && NBA_LEGACY_ABBR[a]) || a;
+const dispMatchup = m => (SPORT === 'nba' && m)
+  ? m.replace(/[A-Z]{2,3}/g, x => NBA_LEGACY_ABBR[x] || x) : m;
 const NFL_TO_PFR_TEAM = {
   KC: 'kan', NE: 'nwe', NO: 'nor', TB: 'tam', GB: 'gnb', SF: 'sfo',
   LV: 'rai', LAR: 'ram', LAC: 'sdg', LA: 'ram',
@@ -1745,7 +1759,8 @@ function boxscoreUrl(cell) {
       home = cell.m.split(/ vs\.? /)[0].trim();
     } else return null;
     const wnba = SPORT === 'wnba';
-    home = (wnba ? WNBA_TO_BBR_TEAM : NBA_TO_BBR_TEAM)[home] || home;
+    if (!wnba && NBA_BBR_ERA[home]) home = NBA_BBR_ERA[home].find(([end]) => cell.d < end)[1];
+    else home = (wnba ? WNBA_TO_BBR_TEAM : NBA_TO_BBR_TEAM)[home] || home;
     return `https://www.basketball-reference.com/${wnba ? 'wnba/' : ''}boxscores/${ymd}0${home}.html`;
   }
   if (SPORT === 'nfl') {
