@@ -18,18 +18,14 @@ nfl/public/
 # Vendored nba_api repo — install via pip instead if you need it locally
 nba_api/
 
-# Python
 __pycache__/
 *.pyc
 *.pyo
 
-# OS / editors
 .DS_Store
 .vscode/
 .idea/
 
-# Vercel local
 .vercel/
 
-# Claude Code local config (not part of the repo)
 .claude/

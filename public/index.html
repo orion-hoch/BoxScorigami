@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=1200, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <script>
 (() => {
   const V = '?v=2';
@@ -276,6 +276,44 @@
 
   #dock, #topdock { display: contents; }
 
+  #menuBtn { display: none; }
+
+  @media (max-width: 768px) {
+    #tabs { top: 8px; padding: 3px; }
+    #tabs button { padding: 4px 8px; font-size: 12px; }
+    #topRightControls {
+      top: auto; right: auto; left: 8px;
+      bottom: calc(52px + env(safe-area-inset-bottom));
+    }
+    #modeToggle { padding: 2px; }
+    #modeToggle button { padding: 3px 8px; font-size: 11px; }
+    #snipDock { bottom: calc(8px + env(safe-area-inset-bottom)); left: 8px; padding: 3px; }
+    #snipDock button { padding: 4px 8px; font-size: 11px; }
+    #status { display: none; }
+    #brdock { bottom: calc(8px + env(safe-area-inset-bottom)); right: 8px; }
+    #menuBtn {
+      display: block; background: rgba(20,22,26,.85); border: 2px solid #3a4150;
+      border-radius: 8px; color: #8b94a0; padding: 5px 14px; font-size: 12px;
+      font-weight: 700; letter-spacing: .04em; cursor: pointer;
+      font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+    }
+    #menuBtn.active { color: #f7c948; border-color: #f7c948; }
+    #info {
+      top: 50%; transform: translateY(-50%); left: 24px; right: 24px;
+      min-width: 0; max-width: none; max-height: 70vh; overflow-y: auto; z-index: 40;
+    }
+    #info:not(.open) { display: none; }
+    #info .panel-btn[data-target="info"] { display: none; }
+    #totalsToggle, #injuredToggle { padding: 3px 8px; font-size: 11px; }
+    #leaders { max-width: none; margin-top: 8px; }
+    #leaders h2 { font-size: 11px; }
+    #detail {
+      top: auto; bottom: calc(8px + env(safe-area-inset-bottom));
+      left: 8px; right: 8px; min-width: 0; max-width: none;
+      max-height: 45vh; overflow-y: auto; z-index: 30;
+    }
+  }
+
 </style>
 </head>
 <body>
@@ -283,7 +321,7 @@
 <div id="snipRect"></div>
 <div id="snipDock">
   <button id="peelToggle" title="Turn Peel on to show the handles. Drag the face spheres to slice inward from any side; drag the corner spheres along the diagonal to carve out a corner. Turn Peel off to hide the handles while keeping the peel effect.">Peel</button>
-  <button id="snipToggle" title="Drag a box over the cube to select the stat lines inside it (at any depth). Click without dragging to clear. Scroll to zoom and right-drag to pan while active.">Save and Export</button>
+  <button id="snipToggle" title="Drag a box over the cube to select the stat lines inside it (at any depth). Click without dragging to clear. Scroll to zoom and right-drag to pan while active.">Select and Export</button>
   <button id="snipExport" style="display:none" title="Download every game in the highlighted selection as a CSV">Export</button>
 </div>
 
@@ -380,6 +418,7 @@
 </div>
 
 <div id="brdock">
+<button id="menuBtn">Menu</button>
 <div id="status">loading...</div>
 
 <div id="leaders" class="panel minimized">
@@ -512,7 +551,34 @@ function makeLabel(text, color = '#e6e8eb', heightUnits = 14) {
 const canvas = document.getElementById('canvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches;
-renderer.setPixelRatio(IS_MOBILE ? 1 : Math.min(window.devicePixelRatio, 3));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 2 : 3));
+const mobileMQ = window.matchMedia('(max-width: 768px)');
+function applyMobileUI(on) {
+  const info = document.getElementById('info');
+  const menuBtn = document.getElementById('menuBtn');
+  document.getElementById('snipToggle').textContent = on ? 'Export' : 'Select and Export';
+  if (on) {
+    const row = document.createElement('div');
+    row.className = 'ctl-row';
+    row.id = 'mobileToggleRow';
+    row.append(document.getElementById('totalsToggle'), document.getElementById('injuredToggle'));
+    document.getElementById('controls').prepend(row);
+    info.appendChild(document.getElementById('leaders'));
+  } else {
+    document.getElementById('topRightControls')
+      .prepend(document.getElementById('totalsToggle'), document.getElementById('injuredToggle'));
+    document.getElementById('mobileToggleRow')?.remove();
+    document.getElementById('brdock').appendChild(document.getElementById('leaders'));
+    info.classList.remove('open');
+    menuBtn.classList.remove('active');
+  }
+}
+applyMobileUI(mobileMQ.matches);
+mobileMQ.addEventListener('change', (e) => applyMobileUI(e.matches));
+document.getElementById('menuBtn').addEventListener('click', () => {
+  const info = document.getElementById('info');
+  document.getElementById('menuBtn').classList.toggle('active', info.classList.toggle('open'));
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 const scene = new THREE.Scene();
@@ -1237,7 +1303,6 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
   }
 });
 
-// ---- Snip: rectangle highlighter + CSV export ----
 const snipToggleEl = document.getElementById('snipToggle');
 const snipExportEl = document.getElementById('snipExport');
 const snipRectEl = document.getElementById('snipRect');
@@ -1265,7 +1330,7 @@ function snipClear() {
 snipToggleEl.addEventListener('click', () => {
   snipOn = !snipOn;
   snipToggleEl.classList.toggle('active', snipOn);
-  controls.enableRotate = !snipOn;  // left-drag draws the box; zoom + right-drag pan stay live
+  controls.enableRotate = !snipOn;
   renderer.domElement.style.cursor = snipOn ? 'crosshair' : 'default';
   if (!snipOn) snipClear();
 });
@@ -1302,7 +1367,7 @@ function cancelSnipDrag() {
 function endSnipDrag(ev) {
   const { x0, y0, x1, y1 } = snipBox(ev);
   cancelSnipDrag();
-  if (x1 - x0 < 4 && y1 - y0 < 4) { snipClear(); return; }  // plain click clears
+  if (x1 - x0 < 4 && y1 - y0 < 4) { snipClear(); return; }
   snipSelect(x0, y0, x1, y1);
 }
 
@@ -1474,7 +1539,7 @@ function axisFiltered(c, axf) {
   for (let i = 0; i < 3; i++) {
     const f = axf[i];
     if (!f) continue;
-    const lo = coords[i] * k, hi = lo + k - 1;  // fine-value range this (possibly coarse) cell covers
+    const lo = coords[i] * k, hi = lo + k - 1;
     if (f.sign === '≥' ? hi < f.v : f.sign === '≤' ? lo > f.v : (f.v < lo || f.v > hi)) return true;
   }
   return false;
@@ -1692,12 +1757,11 @@ const NBA_TO_BBR_TEAM = {
 };
 // Same NBA-API abbr, different BBR code depending on era.
 const NBA_BBR_ERA = {
-  CHA: [['2014-07', 'CHA'], ['9999', 'CHO']],   // Bobcats vs Hornets
-  WAS: [['1997-07', 'WSB'], ['9999', 'WAS']],   // Bullets vs Wizards
-  KCK: [['1975-07', 'KCO'], ['9999', 'KCK']],   // KC-Omaha vs KC Kings
+  CHA: [['2014-07', 'CHA'], ['9999', 'CHO']],
+  WAS: [['1997-07', 'WSB'], ['9999', 'WAS']],
+  KCK: [['1975-07', 'KCO'], ['9999', 'KCK']],
 };
 const WNBA_TO_BBR_TEAM = { SAN: 'SAS', PHX: 'PHO', PDX: 'POR' };
-// stats.nba.com uses legacy codes for the same franchise pre-1996-97; show the modern ones.
 const NBA_LEGACY_ABBR = { GOS: 'GSW', PHL: 'PHI', SAN: 'SAS', UTH: 'UTA', BLT: 'BAL' };
 const dispAbbr = a => (SPORT === 'nba' && a && NBA_LEGACY_ABBR[a]) || a;
 const dispMatchup = m => (SPORT === 'nba' && m)
