@@ -101,6 +101,13 @@ GROUPS = {
     "sk": {"label": "Skaters", "stats": SKATERS, "sanity": SK_SANITY,
            "table": SK_TABLE, "matchup": "matchup",
            "defaults": ("goals", "assists", "sog")},
+    # per-position slices of the skater data, MLB-style (position is per game row)
+    **{key: {"label": label, "stats": SKATERS,
+             "sanity": f"({SK_SANITY}) AND position = '{pos}'",
+             "table": SK_TABLE, "matchup": "matchup",
+             "defaults": ("goals", "assists", "sog")}
+       for key, label, pos in [("c", "C", "C"), ("lw", "LW", "L"),
+                               ("rw", "RW", "R"), ("d", "D", "D")]},
     "g":  {"label": "Goalies", "stats": GOALIES, "sanity": GL_SANITY,
            "table": GL_TABLE, "matchup": "matchup",
            "defaults": ("saves", "goals_against", "toi_min")},

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <script>
 (() => {
-  const V = '?v=2';
+  const V = '?v=3';
   const bases = { nba: 'nba', wnba: 'wnba', nhl: 'nhl/sk', nfl: 'nfl/off', mlb: 'mlb/all' };
   const m = /sport=(\w+)/.exec(location.hash);
   const base = bases[(m && bases[m[1]]) ? m[1] : 'nba'];
@@ -29,6 +29,7 @@
 <link rel="modulepreload" href="vendor/controls/OrbitControls.js" />
 <link rel="modulepreload" href="rollup.js" />
 <title>BoxScorigami</title>
+<meta name="description" content="Interactive 3D visualization of every box score in NBA, WNBA, NFL, MLB, and NHL history. Pick any three stats as axes and explore which stat lines have happened once, many times, or never." />
 <link rel="icon" type="image/svg+xml" href="boxscorigami.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -82,7 +83,8 @@
   #legend { margin-top: 7px; display: flex; gap: 10px; align-items: center; font-size: 11px; }
   #legend .sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; vertical-align: middle; margin-right: 4px; border: 1px solid rgba(255,255,255,.15); }
 
-  #controls { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; font-size: 11px; }
+  #info #wRow { margin-top: 6px; }
+  #controls { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
   #controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
   #controls .ctl-row { display: flex; gap: 16px; align-items: center; }
   #controls .ctl-row label { flex: 0 0 auto; }
@@ -176,7 +178,7 @@
   }
   #tabs button {
     background: transparent; color: #8b94a0; border: 0;
-    padding: 6px 22px; font-size: 14px; font-weight: 700;
+    padding: 6px clamp(8px, 1.6vw, 22px); font-size: 14px; font-weight: 700;
     border-radius: 5px; cursor: pointer; letter-spacing: .04em;
     font-family: 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif;
   }
@@ -223,6 +225,13 @@
     flex: 0 0 auto;
   }
   .panel-btn:hover { color: #f7c948; border-color: #f7c948; }
+  .cell-badge {
+    display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px;
+    font-size: 10px; font-weight: 700; vertical-align: middle;
+    border: 1px solid #3a4150; color: #8b94a0;
+  }
+  .cell-badge.po { border-color: #a08b45; color: #c4ad62; }
+  .cell-badge.rk { border-color: #4e8894; color: #6da7b2; }
   .panel.minimized > *:not(.panel-header) { display: none !important; }
   .panel.minimized .panel-header { margin-bottom: 0; }
 
@@ -287,7 +296,8 @@
   }
   #posBar button:hover { color:#e6e8eb; }
   #posBar button.active { background:#2a2f36; color:#f7c948; border-color:#3a4049; }
-  #posBar .pos-sep { width:1px; align-self:stretch; margin:1px 3px; background:#2a2f36; }
+  #posBar .pos-sep, #snipDock .pos-sep, #modeToggle .pos-sep { width:1px; align-self:stretch; margin:1px 3px; background:#2a2f36; }
+  #snipDock .pos-sep, #modeToggle .pos-sep { width:2px; background:#3a4150; }
 
   #dock, #topdock { display: contents; }
 
@@ -295,10 +305,11 @@
 
   @media (max-width: 768px) {
     #tabs { top: 8px; padding: 3px; }
-    #tabs button { padding: 4px 8px; font-size: 12px; }
+    #tabs button { padding: 5px clamp(4px, 2.8vw, 12px); font-size: 12px; }
     #topRightControls {
-      top: auto; right: auto; left: 8px;
-      bottom: calc(52px + env(safe-area-inset-bottom));
+      top: auto; left: 8px; right: 8px;
+      bottom: calc(42px + env(safe-area-inset-bottom));
+      align-items: stretch;
     }
     #modeToggle { padding: 2px; }
     #modeToggle button { padding: 3px 8px; font-size: 11px; }
@@ -327,13 +338,16 @@
       left: 8px; right: 8px; min-width: 0; max-width: none;
       max-height: 45vh; overflow-y: auto; z-index: 30;
     }
-    body > #wRow {
-      position: fixed; left: 8px; right: 8px; z-index: 35; margin-top: 0;
-      bottom: calc(94px + env(safe-area-inset-bottom));
+    #topRightControls #wRow {
+      flex: 1; min-width: 0;
       background: rgba(20,22,26,.85); border: 2px solid #3a4150;
-      border-radius: 8px; padding: 6px 10px; font-size: 12px;
+      border-radius: 8px; padding: 4px 10px; font-size: 12px;
     }
-    body:has(#info.open) > #wRow { display: none !important; }
+    #modeToggle, #topRightControls #wRow, #snipDock, #menuBtn {
+      height: 30px; box-sizing: border-box;
+    }
+    #snipDock { align-items: center; }
+    body:has(#info.open) #topRightControls #wRow { display: none !important; }
   }
 
 </style>
@@ -343,7 +357,8 @@
 <div id="snipRect"></div>
 <div id="snipDock">
   <button id="peelToggle" title="Turn Peel on to show the handles. Drag the face spheres to slice inward from any side; drag the corner spheres along the diagonal to carve out a corner. Turn Peel off to hide the handles while keeping the peel effect.">Peel</button>
-  <button id="snipToggle" title="Drag a box over the cube to select the stat lines inside it (at any depth). Click without dragging to clear. Scroll to zoom and right-drag to pan while active.">Select and Export</button>
+  <span class="pos-sep"></span>
+  <button id="snipToggle" title="Drag a box over the cube to select the stat lines inside it (at any depth). Click without dragging to clear. Scroll to zoom and right-drag to pan while active.">Select & Export</button>
   <button id="snipExport" style="display:none" title="Download every game in the highlighted selection as a CSV">Export</button>
 </div>
 
@@ -360,6 +375,7 @@
   <button id="injuredToggle">Min Games</button>
   <div id="modeToggle">
     <button data-mode="game" class="active">Single Game</button>
+    <span class="pos-sep"></span>
     <button data-mode="season">Season</button>
   </div>
 </div>
@@ -368,7 +384,7 @@
 <div id="dock">
 <div id="info" class="panel">
   <div class="panel-header">
-    <h1 id="cubeTitle">BoxScorigami</h1>
+    <h1 id="cubeTitle">Display Settings</h1>
     <button class="panel-btn" data-action="minimize" data-target="info" title="minimize">−</button>
   </div>
   <div class="hint" id="axisHint">Choose any three stats for the axes</div>
@@ -388,7 +404,7 @@
     <span class="lab" title="Slice the cube by a fourth stat">4th</span>
     <select id="axisW" style="grid-column: 2 / -1"></select>
   </div>
-  <div id="wRow" style="display:none; align-items:center; gap:8px; margin-top:6px">
+  <div id="wRow" style="display:none; align-items:center; gap:8px">
     <input type="range" id="wSlider" step="1" style="flex:1; accent-color:#f7c948; min-width:0" />
     <span id="wReadout" style="color:#f7c948; white-space:nowrap; font-variant-numeric:tabular-nums"></span>
   </div>
@@ -401,19 +417,19 @@
 
   <div id="controls">
     <div class="ctl-row">
-      <label><input type="checkbox" id="showEnclosed" /> Show Near Misses<span class="info-icon" data-tip="Statlines that haven't happened but are surrounded by statlines that have">?</span></label>
+      <label><input type="checkbox" id="showEnclosed" /> Show Near Misses<span class="info-icon" data-tip="Statlines that have never happened but are connected on all 6 sides to statlines that have — holes in the cube">?</span></label>
       <label><input type="checkbox" id="hideScorigamis" /> Hide Scorigamis</label>
     </div>
     <div class="ctl-row">
       <label><input type="checkbox" id="hideRepeated" /> Hide Repeated Games</label>
-      <label id="lbSliceLabel" style="display:none" title="Leaderboard counts only the current slider mark instead of totals across all marks"><input type="checkbox" id="lbSlice" /> LB @ Mark</label>
+      <label id="lbSliceLabel" style="display:none"><input type="checkbox" id="lbSlice" /> LB @ Mark<span class="info-icon" data-tip="With a 4th stat active, the leaderboard totals every slider mark. Check to count only the mark currently shown.">?</span></label>
     </div>
     <div class="ctl-row">
       <label><input type="checkbox" id="showAxes" checked /> Show Axes</label>
       <label><input type="checkbox" id="showLabels" checked /> Show Labels</label>
     </div>
     <div class="coarseRow">
-      <span>Coarseness<span class="info-icon" data-tip="Merge each k×k×k block of stat lines into one voxel, summing their tallies. Coarsens granular season data so true outliers stand out.">?</span></span>
+      <span>Coarseness</span>
       <div id="coarseToggle">
         <button data-k="1" class="active">1×</button>
         <button data-k="2">2×</button>
@@ -421,6 +437,7 @@
         <button data-k="4">4×</button>
         <button data-k="5" class="hi-k">5×</button>
         <button data-k="6" class="hi-k">6×</button>
+        <span class="info-icon" data-tip="Bundles box scores into ranges: each box covers all the stat lines nearest to it instead of one exact line, so standouts are easier to spot.">?</span>
       </div>
     </div>
   </div>
@@ -443,7 +460,7 @@
 
 <div id="detail" class="panel">
   <div class="panel-header">
-    <h2>Cell Details</h2>
+    <h2>Cell Details<span id="cellBadges"></span></h2>
     <button class="panel-btn" data-action="close" data-target="detail" title="close">×</button>
   </div>
   <div id="detailBody"></div>
@@ -603,15 +620,19 @@ const mobileMQ = window.matchMedia('(max-width: 768px)');
 function applyMobileUI(on) {
   const info = document.getElementById('info');
   const menuBtn = document.getElementById('menuBtn');
-  document.getElementById('snipToggle').textContent = on ? 'Export' : 'Select and Export';
   if (on) {
     const row = document.createElement('div');
     row.className = 'ctl-row';
     row.id = 'mobileToggleRow';
     row.append(document.getElementById('totalsToggle'), document.getElementById('injuredToggle'));
     document.getElementById('controls').prepend(row);
-    info.appendChild(document.getElementById('leaders'));
-    document.body.appendChild(document.getElementById('wRow'));
+    const leaders = document.getElementById('leaders');
+    info.appendChild(leaders);
+    leaders.classList.remove('minimized');
+    const lbBtn = leaders.querySelector('.panel-btn');
+    lbBtn.textContent = '−';
+    lbBtn.title = 'minimize';
+    document.getElementById('topRightControls').appendChild(document.getElementById('wRow'));
   } else {
     document.getElementById('topRightControls')
       .prepend(document.getElementById('totalsToggle'), document.getElementById('injuredToggle'));
@@ -1128,6 +1149,25 @@ function ordinal(n) {
 
 let detailToken = 0;
 
+function seasonOf(dateStr) {
+  const y = +dateStr.slice(0, 4);
+  return SPORT === 'wnba' ? y : (+dateStr.slice(5, 7) >= 8 ? y : y - 1);
+}
+
+const POS_MAPS = {};
+function loadPosMap(sport) {
+  return POS_MAPS[sport] ||= fetch(`${sport}/positions.json.br${DUMP_V}`)
+    .then(r => r.ok ? r.json() : {})
+    .catch(() => ({}));
+}
+
+const ROOKIE_MAPS = {};
+function loadRookieMap(sport) {
+  return ROOKIE_MAPS[sport] ||= fetch(`${sport}/rookies.json.br${DUMP_V}`)
+    .then(r => r.ok ? r.json() : {})
+    .catch(() => ({}));
+}
+
 function showDetailForCell(c) {
   detailEl.style.display = 'block';
   const url = boxscoreUrl(c);
@@ -1160,7 +1200,30 @@ function showDetailForCell(c) {
     ${(c.w === 1 || c.w === 0) ? `<div class="row"><span class="k">Decision</span><span class="v">${c.w === 1 ? 'Won' : 'Lost'}</span></div>` : ''}
     <div class="row"><span class="k">Box Score</span><span class="v">${linkHtml}</span></div>
   `;
+  const badges = [];
+  if (c.po === 1) badges.push('<span class="cell-badge po"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="vertical-align:-1.5px;margin-right:2px"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>Playoffs</span>');
+  if (SPORT === 'mlb' && POSITION !== 'all') {
+    const p = [...MLB_POS_PRIMARY, ...MLB_POS_FIELD].find(([k]) => k === POSITION);
+    if (p) badges.push(`<span class="cell-badge">${p[1]}</span>`);
+  }
+  document.getElementById('cellBadges').innerHTML = badges.join('');
   const myToken = ++detailToken;
+  if (SPORT !== 'mlb' && c.pid != null && c.d) {
+    const sp = SPORT;
+    const year = MODE !== 'season' ? seasonOf(c.d) : +String(c.d).slice(0, 4);
+    loadRookieMap(sp).then(m => {
+      if (m[c.pid] === year && myToken === detailToken && SPORT === sp)
+        document.getElementById('cellBadges').insertAdjacentHTML('beforeend', '<span class="cell-badge rk"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" style="vertical-align:-1.5px;margin-right:2px"><path d="M15.49 9.63c-.18-2.79-1.31-5.51-3.43-7.63-2.14 2.14-3.32 4.86-3.55 7.63 1.28.68 2.46 1.56 3.49 2.63 1.03-1.06 2.21-1.94 3.49-2.63zM12 15.45C9.85 12.17 6.18 10 2 10c0 5.32 3.36 9.82 8.03 11.49.63.23 1.29.4 1.97.51.68-.12 1.33-.29 1.97-.51C18.64 19.82 22 15.32 22 10c-4.18 0-7.85 2.17-10 5.45z"/></svg>Rookie</span>');
+    });
+  }
+  if ((SPORT === 'nhl' || SPORT === 'nfl') && c.pid != null) {
+    const sp = SPORT;
+    loadPosMap(sp).then(m => {
+      const pos = m[c.pid];
+      if (pos && myToken === detailToken && SPORT === sp)
+        document.getElementById('cellBadges').insertAdjacentHTML('beforeend', `<span class="cell-badge">${pos}</span>`);
+    });
+  }
   detailBodyEl.innerHTML = `
     <div class="pra">${fmtAxis(c)}</div>
     <div class="row"><span class="k">Tally</span><span class="v">${c.n === 1 ? '1' : ordinal(c.n)}</span></div>
@@ -1216,6 +1279,7 @@ function recentRows(recent, seasonMode) {
 }
 function showDetailForEnclosed(p, r, a) {
   detailEl.style.display = 'block';
+  document.getElementById('cellBadges').innerHTML = '';
   ++detailToken;
   const occ = state.occupied;
   const neighborRows = NEIGHBOR_OFFSETS_6.map(([dp, dr, da]) => {
@@ -1815,13 +1879,16 @@ playerFilterInputEl.addEventListener('keydown', (ev) => {
 
 document.addEventListener('click', (ev) => {
   const icon = ev.target.closest('.info-icon');
+  const wasOpen = icon && [...document.querySelectorAll('.info-popover')].some(p => p._icon === icon);
   document.querySelectorAll('.info-popover').forEach(p => p.remove());
   if (!icon) return;
   ev.preventDefault();
   ev.stopPropagation();
+  if (wasOpen) return;
   const tip = document.createElement('div');
   tip.className = 'info-popover';
   tip.textContent = icon.dataset.tip || '';
+  tip._icon = icon;
   document.body.appendChild(tip);
   const rect = icon.getBoundingClientRect();
   const x = Math.min(window.innerWidth - tip.offsetWidth - 8, rect.left);
@@ -1870,10 +1937,19 @@ const SPORTS = {
   nfl:  {
     label: 'NFL',
     defaults: ['rec_yds', 'rec', 'rec_td'],
-    groups: [['off', 'Offense'], ['def', 'Defense'], ['st', 'Special Teams']],
+    groups: [['off', 'OFF'], ['def', 'DEF'], ['st', 'ST'], null,
+             ['qb', 'QB'], ['rb', 'RB'], ['wr', 'WR'], ['te', 'TE'],
+             ['dl', 'DL'], ['lb', 'LB'], ['db', 'DB']],
     groupDefaults: {
       off: ['rec_yds', 'rec', 'rec_td'],
+      qb:  ['pass_yds', 'pass_td', 'pass_int'],
+      rb:  ['rush_yds', 'rush_att', 'rush_td'],
+      wr:  ['rec_yds', 'rec', 'rec_td'],
+      te:  ['rec_yds', 'rec', 'rec_td'],
       def: ['tackles_combined', 'sacks', 'def_int'],
+      dl:  ['sacks', 'tackles_combined', 'tackles_loss'],
+      lb:  ['tackles_combined', 'sacks', 'def_int'],
+      db:  ['def_int', 'pass_defended', 'tackles_combined'],
       st:  ['kick_ret_yds', 'punt_ret_yds', 'fgm'],
     },
   },
@@ -1882,9 +1958,13 @@ const SPORTS = {
   nhl:  {
     label: 'NHL',
     defaults: ['goals', 'assists', 'sog'],
-    groups: [['sk', 'Skaters'], ['g', 'Goalies']],
+    groups: [['sk', 'POS'], ['g', 'G'], null, ['c', 'C'], ['lw', 'LW'], ['rw', 'RW'], ['d', 'D']],
     groupDefaults: {
       sk: ['goals', 'assists', 'sog'],
+      c:  ['goals', 'assists', 'sog'],
+      lw: ['goals', 'assists', 'sog'],
+      rw: ['goals', 'assists', 'sog'],
+      d:  ['goals', 'assists', 'sog'],
       g:  ['saves', 'goals_against', 'toi_min'],
     },
   },
@@ -1995,7 +2075,7 @@ const QUALIFIER_TIP = 'Min 150 PA / 50 IP, keeps rate stats off tiny samples';
 let SEASON_TOTALS = true;
 const HAS_SEASON_AVG = new Set(['nfl', 'nhl']);
 const USES_BINARY = new Set(['nba', 'wnba', 'nfl', 'mlb', 'nhl']);
-const DUMP_V = '?v=2';
+const DUMP_V = '?v=3';
 const STATS_META = {};
 
 let POSITION = 'all';
@@ -2133,7 +2213,7 @@ function prefetchSiblings() {
     bases = [...MLB_POS_PRIMARY, ...MLB_POS_FIELD]
       .map(([k]) => `mlb/${k}`).filter(b => b !== `mlb/${POSITION}`);
   } else if (SPORTS[sport].groups) {
-    bases = SPORTS[sport].groups
+    bases = SPORTS[sport].groups.filter(Boolean)
       .map(([k]) => `${sport}/${k}`).filter(b => b !== `${sport}/${GROUP}`);
   } else return;
   const idle = window.requestIdleCallback
@@ -2426,8 +2506,9 @@ function buildPosBar() {
 
 function buildGroupBar() {
   const bar = document.getElementById('posBar');
-  bar.innerHTML = SPORTS[SPORT].groups.map(([k, l]) =>
-    `<button data-group="${k}" class="${k === GROUP ? 'active' : ''}">${l}</button>`
+  bar.innerHTML = SPORTS[SPORT].groups.map(g => g
+    ? `<button data-group="${g[0]}" class="${g[0] === GROUP ? 'active' : ''}">${g[1]}</button>`
+    : '<span class="pos-sep"></span>'
   ).join('') + '<span class="pos-sep"></span>' + poButtonsHtml();
   bar.querySelectorAll('button[data-group]').forEach(b =>
     b.addEventListener('click', () => setGroup(b.dataset.group)));
@@ -2442,8 +2523,6 @@ function buildPoBar() {
 
 function groupAxisDefaults(stats) {
   const keys = new Set(stats.map(s => s.key));
-  const cur = [axisXEl.value, axisYEl.value, axisZEl.value];
-  if (cur.every(k => keys.has(k)) && new Set(cur).size === 3) return cur;
   const pick = (SPORTS[SPORT].groupDefaults[GROUP] || []).filter(k => keys.has(k));
   for (const s of stats) { if (pick.length >= 3) break; if (!pick.includes(s.key)) pick.push(s.key); }
   return pick.slice(0, 3);

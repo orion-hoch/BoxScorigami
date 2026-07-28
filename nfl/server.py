@@ -22,6 +22,9 @@ OFFENSE = {
     "tgt":      {"col": "tgt",      "label": "Targets",       "color": "#9fc2ff"},
     "rec_yds":  {"col": "rec_yds",  "label": "Rec Yds",       "color": "#5fd5ff"},
     "rec_td":   {"col": "rec_td",   "label": "Rec TD",        "color": "#4dd0e1"},
+    "scrim_yds": {"col": "(CASE WHEN rush_yds IS NULL AND rec_yds IS NULL THEN NULL"
+                         " ELSE IFNULL(rush_yds, 0) + IFNULL(rec_yds, 0) END)",
+                  "label": "Scrimmage Yds", "color": "#ffb35c"},
 }
 
 DEFENSE = {
@@ -114,13 +117,32 @@ ST_SANITY = shared.sanity_filter([
 MATCHUP_LOOKUP = """(SELECT p.matchup FROM player_games p
      WHERE p.game_id = t.game_id AND p.team_abbr = t.team_abbr LIMIT 1)"""
 
+# player_pos_bucket maps each player to a modern position bucket (era-aware:
+# pre-1960 LE/RE ends count as receivers, pre-2000 LS/RS are safeties).
+def _bucket(b):
+    return f"player_pfr_id IN (SELECT pid FROM player_pos_bucket WHERE bucket = '{b}')"
+
+
 GROUPS = {
     "off": {"label": "Offense", "stats": OFFENSE, "sanity": SANITY_FILTER,
             "table": "player_games", "matchup": "matchup",
             "defaults": ("rec_yds", "rec", "rec_td")},
+    **{k: {"label": k.upper(), "stats": OFFENSE,
+           "sanity": f"({SANITY_FILTER}) AND {_bucket(k)}",
+           "table": "player_games", "matchup": "matchup", "defaults": d}
+       for k, d in [("qb", ("pass_yds", "pass_td", "pass_int")),
+                    ("rb", ("rush_yds", "rush_att", "rush_td")),
+                    ("wr", ("rec_yds", "rec", "rec_td")),
+                    ("te", ("rec_yds", "rec", "rec_td"))]},
     "def": {"label": "Defense", "stats": DEFENSE, "sanity": DEF_SANITY,
             "table": "player_defense", "matchup": MATCHUP_LOOKUP,
             "defaults": ("tackles_combined", "sacks", "def_int")},
+    **{k: {"label": k.upper(), "stats": DEFENSE,
+           "sanity": f"({DEF_SANITY}) AND {_bucket(k)}",
+           "table": "player_defense", "matchup": MATCHUP_LOOKUP, "defaults": d}
+       for k, d in [("dl", ("sacks", "tackles_combined", "tackles_loss")),
+                    ("lb", ("tackles_combined", "sacks", "def_int")),
+                    ("db", ("def_int", "pass_defended", "tackles_combined"))]},
     "st":  {"label": "Special Teams", "stats": SPECIAL, "sanity": ST_SANITY,
             "table": SPECIAL_TABLE, "matchup": MATCHUP_LOOKUP,
             "defaults": ("kick_ret_yds", "punt_ret_yds", "fgm")},

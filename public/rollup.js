@@ -48,11 +48,12 @@ export function occToRecent(d, j, game) {
 }
 function cellFromRep(d, c, game) {
   const D = d.dict, j = c.ti;
+  const po = d.po && c.tl != null ? d.po[c.tl] : null;
   return game
     ? { p: c.p, r: c.r, a: c.a, n: c.n, d: D.date[d.date[j]], pl: D.name[d.name[j]], t: D.team[d.team[j]],
-        m: D.matchup[d.matchup[j]], g: D.gameid[d.gameid[j]], pid: D.pid[d.pid[j]], w: d.wl[j] === -1 ? null : d.wl[j] }
+        m: D.matchup[d.matchup[j]], g: D.gameid[d.gameid[j]], pid: D.pid[d.pid[j]], w: d.wl[j] === -1 ? null : d.wl[j], po }
     : { p: c.p, r: c.r, a: c.a, n: c.n, d: D.season[d.season[j]], pl: D.name[d.name[j]], t: null,
-        m: D.season[d.season[j]] + ' season', g: null, gp: d.gp[j], pid: D.pid[d.pid[j]] };
+        m: D.season[d.season[j]] + ' season', g: null, gp: d.gp[j], pid: D.pid[d.pid[j]], po };
 }
 
 export function lineKept(d, i, wlFilter, qual, minGames, poFilter) {
@@ -108,7 +109,7 @@ function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter, wKey)
     if (!c) { c = { p: vx, r: vy, a: vz, n: 0, ti: -1, w4: iw >= 0 ? vw : undefined }; cells.set(key, c); }
     c.n += n[i];
     for (let j = recOff[i], e = recOff[i + 1]; j < e; j++) {
-      if (c.ti < 0 || cmpOcc(dump, j, c.ti, game) < 0) c.ti = j;
+      if (c.ti < 0 || cmpOcc(dump, j, c.ti, game) < 0) { c.ti = j; c.tl = i; }
     }
   }
   const out = [];
