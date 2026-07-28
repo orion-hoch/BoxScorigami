@@ -2045,7 +2045,14 @@ function getDump(quiet) {
       r = r && await r;
       if (!r) r = await fetch(url);
       if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
-      return bin ? decodeBinary(await r.arrayBuffer()) : await r.json();
+      try {
+        return bin ? decodeBinary(await r.arrayBuffer()) : await r.json();
+      } catch {
+        // a cache (CDN or browser) served garbage; refetch straight from network
+        r = await fetch(url, { cache: 'reload' });
+        if (!r.ok) throw new Error(`GET ${url}: ${r.status}`);
+        return bin ? decodeBinary(await r.arrayBuffer()) : await r.json();
+      }
     })();
     p.catch(() => { if (DUMP_CACHE[key] === p) delete DUMP_CACHE[key]; });
     DUMP_CACHE[key] = p;
@@ -2259,9 +2266,10 @@ lbSliceEl.addEventListener('change', () => {
 });
 
 let sportLoading = false;
+let sportLoadFailed = false;
 
 async function loadSport(sport) {
-  if (!SPORTS[sport] || sport === SPORT || sportLoading) return;
+  if (!SPORTS[sport] || (sport === SPORT && !sportLoadFailed) || sportLoading) return;
   sportLoading = true;
   try {
     await loadSportInner(sport);
@@ -2271,6 +2279,7 @@ async function loadSport(sport) {
 }
 
 async function loadSportInner(sport) {
+  sportLoadFailed = false;
   SPORT = sport;
   document.querySelectorAll('#tabs button').forEach(b => {
     b.classList.toggle('active', b.dataset.sport === sport);
@@ -2323,6 +2332,7 @@ async function loadSportInner(sport) {
       prefetchSiblings();
     }
   } catch (err) {
+    sportLoadFailed = true;
     statusEl.textContent = 'ERROR: ' + err.message;
     console.error(err);
   }

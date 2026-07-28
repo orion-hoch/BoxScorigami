@@ -33,5 +33,11 @@
 	@vendor path /vendor/*
 	header @vendor Cache-Control "public, max-age=604800"
 
+	# index.html and rollup.js must move in lockstep: if a CDN serves a stale
+	# copy of either, the page crashes. no-cache = always revalidate (cheap
+	# ETag check), so Cloudflare can't serve a mixed deploy for hours.
+	@app path / /index.html /rollup.js
+	header @app Cache-Control "no-cache"
+
 	file_server
 }
