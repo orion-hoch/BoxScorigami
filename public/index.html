@@ -32,11 +32,26 @@
 <link rel="icon" type="image/svg+xml" href="boxscorigami.svg" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Ramabhadra&family=Changa:wght@400;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet" />
 <style>
+  /* Trial fonts stamp a "TRIAL FONT" badge over missing glyphs (digits in
+     Regular, symbols like × = ≥ in both), so only claim glyphs they really
+     have; everything else falls through to Poppins (closest geometric match). */
+  @font-face {
+    font-family: 'Code Next'; font-weight: 400; font-display: swap;
+    src: url('vendor/CodeNext-Regular.woff2') format('woff2');
+    unicode-range: U+41-5A, U+61-7A;
+  }
+  @font-face {
+    font-family: 'Code Next'; font-weight: 700; font-display: swap;
+    src: url('vendor/CodeNext-Bold.woff2') format('woff2');
+    unicode-range: U+41-5A, U+61-7A;
+  }
   html, body { margin: 0; padding: 0; height: 100%; background: #0d0f12; color: #e6e8eb;
-               font-family: 'Ramabhadra', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+               font-family: 'Code Next', 'Poppins', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+               font-variant-ligatures: none; /* trial font maps ff/fi ligatures to the badge */
                overflow: hidden; }
+  button, input, select, textarea { font-variant-ligatures: none; }
   #canvas { display: block; width: 100%; height: 100%; }
   .panel {
     position: absolute; padding: 10px 12px;
@@ -56,7 +71,7 @@
   }
   h1, h2 { font-size: 13px; margin: 0 0 5px 0; letter-spacing: .02em; }
   #cubeTitle {
-    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+    font-family: 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif;
     font-weight: 700; font-size: 15px; letter-spacing: .04em;
   }
   .hint { color: #8b94a0; font-size: 11px; }
@@ -163,7 +178,7 @@
     background: transparent; color: #8b94a0; border: 0;
     padding: 6px 22px; font-size: 14px; font-weight: 700;
     border-radius: 5px; cursor: pointer; letter-spacing: .04em;
-    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+    font-family: 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif;
   }
   #tabs button:hover { color: #e6e8eb; }
   #tabs button.active { background: #2a2f36; color: #f7c948; }
@@ -180,7 +195,7 @@
     background: transparent; color: #8b94a0; border: 0;
     padding: 4px 16px; font-size: 12px; font-weight: 700;
     border-radius: 5px; cursor: pointer; letter-spacing: .04em;
-    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+    font-family: 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif;
   }
   #modeToggle button:hover { color: #e6e8eb; }
   #modeToggle button.active { background: #2a2f36; color: #f7c948; }
@@ -189,7 +204,7 @@
     background: rgba(20,22,26,.85); border: 2px solid #3a4150; border-radius: 8px;
     color: #8b94a0; padding: 5px 10px; font-size: 11px; font-weight: 700;
     cursor: pointer; letter-spacing: .04em; backdrop-filter: blur(6px);
-    font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+    font-family: 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif;
   }
   #injuredToggle:hover, #totalsToggle:hover { color: #e6e8eb; }
   #injuredToggle.active, #totalsToggle.active { color: #f7c948; border-color: #f7c948; }
@@ -295,7 +310,7 @@
       display: block; background: rgba(20,22,26,.85); border: 2px solid #3a4150;
       border-radius: 8px; color: #8b94a0; padding: 5px 14px; font-size: 12px;
       font-weight: 700; letter-spacing: .04em; cursor: pointer;
-      font-family: 'Changa', -apple-system, "Segoe UI", sans-serif;
+      font-family: 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif;
     }
     #menuBtn.active { color: #f7c948; border-color: #f7c948; }
     #info {
@@ -410,6 +425,7 @@
       <span style="text-align:center;color:#8b94a0">–</span>
       <input type="number" id="yearTo" placeholder="To" title="Filter by most-recent game year" />
     </div>
+    <div id="yearFilterChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"></div>
     <input type="text" id="playerFilterInput" style="margin-top:6px"
            placeholder="Hide a player's scorigamis (type + Enter)" />
     <div id="playerFilterChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"></div>
@@ -549,13 +565,15 @@ function makeLabel(text, color = '#e6e8eb', heightUnits = 14) {
   const fontPx = 64;
   const pad = 16;
   const measure = document.createElement('canvas').getContext('2d');
-  measure.font = `bold ${fontPx}px 'Ramabhadra', -apple-system, "Segoe UI", sans-serif`;
+  measure.letterSpacing = '0.5px'; // any nonzero spacing suppresses the badge ff ligature
+  measure.font = `bold ${fontPx}px 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif`;
   const w = Math.ceil(measure.measureText(text).width) + pad * 2;
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = fontPx + pad * 2;
   const ctx = canvas.getContext('2d');
-  ctx.font = `bold ${fontPx}px 'Ramabhadra', -apple-system, "Segoe UI", sans-serif`;
+  ctx.letterSpacing = '0.5px';
+  ctx.font = `bold ${fontPx}px 'Code Next', 'Poppins', -apple-system, "Segoe UI", sans-serif`;
   ctx.fillStyle = color;
   ctx.textBaseline = 'middle';
   ctx.shadowColor = 'rgba(0,0,0,0.8)';
@@ -1540,6 +1558,23 @@ const HIDE_MATRIX = new THREE.Matrix4()
 const blockedPlayers = new Set();
 let blockedLower = new Set();
 let reversePlayerFilter = false;
+const pinnedYears = new Set();
+
+function renderYearChips() {
+  const root = document.getElementById('yearFilterChips');
+  root.innerHTML = '';
+  for (const y of [...pinnedYears].sort()) {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `${y} <button title="remove">×</button>`;
+    chip.querySelector('button').addEventListener('click', () => {
+      pinnedYears.delete(y);
+      renderYearChips();
+      applyVisibilityFilters();
+    });
+    root.appendChild(chip);
+  }
+}
 
 function normalizeName(s) {
   return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
@@ -1582,10 +1617,11 @@ function getAxisFilters() {
 
 function isCellFiltered(c, hideScor, hideRep, yr, axf) {
   if ((hideScor && c.n === 1) || (hideRep && c.n >= 2) || isPlayerBlocked(c)) return true;
-  if ((yr.min !== null || yr.max !== null) && c.d) {
+  if ((yr.min !== null || yr.max !== null || pinnedYears.size) && c.d) {
     const yyyy = parseInt(c.d.slice(0, 4), 10);
-    if (yr.min !== null && yyyy < yr.min) return true;
-    if (yr.max !== null && yyyy > yr.max) return true;
+    const inRange = (yr.min !== null || yr.max !== null)
+      && (yr.min === null || yyyy >= yr.min) && (yr.max === null || yyyy <= yr.max);
+    if (!inRange && !pinnedYears.has(yyyy)) return true;
   }
   return !!axf && axisFiltered(c, axf);
 }
@@ -1663,7 +1699,7 @@ function recomputeLeaderboard() {
   const axf = getAxisFilters();
   if (totals) {
     // slider-independent: skip the recount unless data or filters changed
-    const key = JSON.stringify([cube4D.gen, yr, axf, [...blockedLower], reversePlayerFilter]);
+    const key = JSON.stringify([cube4D.gen, yr, [...pinnedYears], axf, [...blockedLower], reversePlayerFilter]);
     if (key === lbTotalsKey) return;
     lbTotalsKey = key;
   } else lbTotalsKey = null;
@@ -1734,6 +1770,17 @@ document.getElementById('playerFilterReverse').addEventListener('click', (e) => 
 
 document.getElementById('yearFrom').addEventListener('input', applyVisibilityFilters);
 document.getElementById('yearTo').addEventListener('input', applyVisibilityFilters);
+for (const id of ['yearFrom', 'yearTo']) {
+  document.getElementById(id).addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.currentTarget.value === '') return;
+    const y = parseInt(e.currentTarget.value, 10);
+    if (!Number.isFinite(y)) return;
+    pinnedYears.add(y);
+    e.currentTarget.value = '';
+    renderYearChips();
+    applyVisibilityFilters();
+  });
+}
 document.querySelectorAll('.axf-val').forEach(el =>
   el.addEventListener('input', applyVisibilityFilters));
 document.querySelectorAll('.axf-sign').forEach(b =>
@@ -2309,6 +2356,8 @@ async function loadSportInner(sport) {
   revBtn.textContent = 'Reverse';
   document.getElementById('yearFrom').value = '';
   document.getElementById('yearTo').value = '';
+  pinnedYears.clear();
+  renderYearChips();
   const isMlb = sport === 'mlb';
   const grouped = !!SPORTS[sport].groups;
   document.getElementById('posBar').style.display = 'flex';
