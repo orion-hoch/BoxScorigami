@@ -327,6 +327,13 @@
       left: 8px; right: 8px; min-width: 0; max-width: none;
       max-height: 45vh; overflow-y: auto; z-index: 30;
     }
+    body > #wRow {
+      position: fixed; left: 8px; right: 8px; z-index: 35; margin-top: 0;
+      bottom: calc(94px + env(safe-area-inset-bottom));
+      background: rgba(20,22,26,.85); border: 2px solid #3a4150;
+      border-radius: 8px; padding: 6px 10px; font-size: 12px;
+    }
+    body:has(#info.open) > #wRow { display: none !important; }
   }
 
 </style>
@@ -604,11 +611,13 @@ function applyMobileUI(on) {
     row.append(document.getElementById('totalsToggle'), document.getElementById('injuredToggle'));
     document.getElementById('controls').prepend(row);
     info.appendChild(document.getElementById('leaders'));
+    document.body.appendChild(document.getElementById('wRow'));
   } else {
     document.getElementById('topRightControls')
       .prepend(document.getElementById('totalsToggle'), document.getElementById('injuredToggle'));
     document.getElementById('mobileToggleRow')?.remove();
     document.getElementById('brdock').appendChild(document.getElementById('leaders'));
+    info.insertBefore(document.getElementById('wRow'), document.getElementById('legend'));
     info.classList.remove('open');
     menuBtn.classList.remove('active');
   }
@@ -1201,7 +1210,8 @@ function recentRows(recent, seasonMode) {
     const link = url
       ? `<a href="${url}" target="_blank" rel="noopener">[link]</a>`
       : '-';
-    return `<div class="recentRow"><span class="nm">${e.pl || 'Unknown'}</span><span class="dt">${e.d || '-'}</span><span class="ln">${link}</span></div>`;
+    const dt = (e.d || '-') + (seasonMode && e.po === 1 ? ' (playoffs)' : '');
+    return `<div class="recentRow"><span class="nm">${e.pl || 'Unknown'}</span><span class="dt">${dt}</span><span class="ln">${link}</span></div>`;
   }).join('');
 }
 function showDetailForEnclosed(p, r, a) {
@@ -1474,7 +1484,7 @@ function collectRowsInCells(keys) {
     meta.push({ key: vx + ',' + vy + ',' + vz, d: o.d || '' });
     rows.push(game
       ? [o.pl, o.d, dispAbbr(o.t) ?? '', dispMatchup(o.m) ?? '', o.w === 1 ? 'W' : o.w === 0 ? 'L' : '', ...stats]
-      : [o.pl, o.d, o.gp ?? '', ...stats]);
+      : [o.pl, o.d + (o.po === 1 ? ' (PO)' : ''), o.gp ?? '', ...stats]);
   };
   const inCell = (vx, vy, vz) =>
     keys.has(Math.floor(vx / k) + ',' + Math.floor(vy / k) + ',' + Math.floor(vz / k));
@@ -1488,7 +1498,7 @@ function collectRowsInCells(keys) {
       if (wCur !== null && v[b + iw] !== wCur) continue;
       if (!inCell(vx, vy, vz)) continue;
       for (let j = recOff[i], e = recOff[i + 1]; j < e; j++)
-        push(occToRecent(dump, j, game), vx, vy, vz);
+        push({ ...occToRecent(dump, j, game), po: dump.po ? dump.po[i] : 0 }, vx, vy, vz);
     }
   } else {
     for (const ln of dump.lines) {
@@ -1919,7 +1929,7 @@ function playerUrl(cell) {
 
 function seasonBoxscoresUrl(cell) {
   if (!cell || cell.pid == null || !cell.d) return null;
-  const st = 'Regular%20Season';
+  const st = cell.po === 1 ? 'Playoffs' : 'Regular%20Season';
   if (SPORT === 'wnba') return `https://stats.wnba.com/player/${cell.pid}/boxscores-traditional/?Season=${cell.d}&SeasonType=${st}`;
   if (SPORT === 'nba')  return `https://www.nba.com/stats/player/${cell.pid}/boxscores-traditional?Season=${cell.d}&SeasonType=${st}`;
   return null;
@@ -2027,7 +2037,7 @@ function poFilterValue() {
 function computeRecentsColumnar(cell) {
   const ctx = state.recentCtx, { dump, ix, iy, iz, game, wlFilter, qual, minGames, poFilter, dz0, dz1, dz2 } = ctx;
   const { v, nAxes, N, recOff, vNull } = dump, k = COARSE;
-  const occ = [];
+  const occ = [], occLine = new Map();
   for (let i = 0; i < N; i++) {
     if (!lineKept(dump, i, wlFilter, qual, minGames, poFilter)) continue;
     const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
@@ -2035,10 +2045,11 @@ function computeRecentsColumnar(cell) {
     if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
     if (ctx.iw >= 0 && v[b + ctx.iw] !== cell.w4) continue;
     if (Math.floor(vx / k) !== cell.p || Math.floor(vy / k) !== cell.r || Math.floor(vz / k) !== cell.a) continue;
-    for (let j = recOff[i], e = recOff[i + 1]; j < e; j++) occ.push(j);
+    for (let j = recOff[i], e = recOff[i + 1]; j < e; j++) { occ.push(j); occLine.set(j, i); }
   }
   occ.sort((j, l) => cmpOcc(dump, j, l, game));
-  return occ.slice(0, 5).map(j => occToRecent(dump, j, game));
+  return occ.slice(0, 5).map(j =>
+    ({ ...occToRecent(dump, j, game), po: dump.po ? dump.po[occLine.get(j)] : 0 }));
 }
 
 function computeRecents(cell) {
