@@ -63,19 +63,34 @@ export function lineKept(d, i, wlFilter, qual, minGames, poFilter) {
   return true;
 }
 
-export function makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
+export function makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter, wKey) {
   const game = dump.mode === 'game';
   const ix = dump.axes.indexOf(x), iy = dump.axes.indexOf(y), iz = dump.axes.indexOf(z);
   return { columnar: !!dump.columnar, dump, ix, iy, iz, game,
+           iw: wKey ? dump.axes.indexOf(wKey) : -1,
            cmp: game ? cmpGame : cmpSeason, wlFilter, qual, minGames, poFilter,
-           dz0: x === 'p_np', dz1: y === 'p_np', dz2: z === 'p_np' };
+           dz0: x === 'p_np', dz1: y === 'p_np', dz2: z === 'p_np', dzw: wKey === 'p_np' };
 }
 
-function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
-  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter);
-  const { ix, iy, iz, game, dz0, dz1, dz2 } = ctx;
-  if (ix < 0 || iy < 0 || iz < 0)
-    return { axes: { x: { max: 0 }, y: { max: 0 }, z: { max: 0 } }, cells: [], recentCtx: ctx };
+function wRange(out) {
+  let min = Infinity, max = -Infinity;
+  for (const c of out) { if (c.w4 < min) min = c.w4; if (c.w4 > max) max = c.w4; }
+  return out.length ? { min, max } : { min: 0, max: 0 };
+}
+
+function finishRollup(out, ctx, wKey) {
+  const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
+  const my = out.reduce((m, c) => Math.max(m, c.r), 0);
+  const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
+  const res = { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out, recentCtx: ctx };
+  if (wKey) res.w = wRange(out);
+  return res;
+}
+
+function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter, wKey) {
+  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter, wKey);
+  const { ix, iy, iz, iw, game, dz0, dz1, dz2, dzw } = ctx;
+  if (ix < 0 || iy < 0 || iz < 0 || (wKey && iw < 0)) return finishRollup([], ctx, wKey);
   const { v, n, nAxes, N, recOff, vNull } = dump;
   const cells = new Map();
   for (let i = 0; i < N; i++) {
@@ -83,26 +98,33 @@ function rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
     const b = i * nAxes, vx = v[b + ix], vy = v[b + iy], vz = v[b + iz];
     if (vx === vNull || vy === vNull || vz === vNull) continue;
     if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
-    const key = vx + ',' + vy + ',' + vz;
+    let key = vx + ',' + vy + ',' + vz, vw = 0;
+    if (iw >= 0) {
+      vw = v[b + iw];
+      if (vw === vNull || (dzw && vw === 0)) continue;
+      key += ',' + vw;
+    }
     let c = cells.get(key);
-    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, ti: -1 }; cells.set(key, c); }
+    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, ti: -1, w4: iw >= 0 ? vw : undefined }; cells.set(key, c); }
     c.n += n[i];
     for (let j = recOff[i], e = recOff[i + 1]; j < e; j++) {
       if (c.ti < 0 || cmpOcc(dump, j, c.ti, game) < 0) c.ti = j;
     }
   }
   const out = [];
-  for (const c of cells.values()) out.push(cellFromRep(dump, c, game));
-  const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
-  const my = out.reduce((m, c) => Math.max(m, c.r), 0);
-  const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
-  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out, recentCtx: ctx };
+  for (const c of cells.values()) {
+    const cell = cellFromRep(dump, c, game);
+    if (c.w4 !== undefined) cell.w4 = c.w4;
+    out.push(cell);
+  }
+  return finishRollup(out, ctx, wKey);
 }
 
-export function rollupCube(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
-  if (dump.columnar) return rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter);
-  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter);
-  const { ix, iy, iz, game, cmp, dz0, dz1, dz2 } = ctx;
+export function rollupCube(dump, x, y, z, wlFilter, qual, minGames, poFilter, wKey) {
+  if (dump.columnar) return rollupColumnar(dump, x, y, z, wlFilter, qual, minGames, poFilter, wKey);
+  const ctx = makeRecentCtx(dump, x, y, z, wlFilter, qual, minGames, poFilter, wKey);
+  const { ix, iy, iz, iw, game, cmp, dz0, dz1, dz2, dzw } = ctx;
+  if (wKey && iw < 0) return finishRollup([], ctx, wKey);
   const cells = new Map();
   for (const ln of dump.lines) {
     if (wlFilter != null && ln.w !== wlFilter) continue;
@@ -112,23 +134,27 @@ export function rollupCube(dump, x, y, z, wlFilter, qual, minGames, poFilter) {
     const vx = ln.v[ix], vy = ln.v[iy], vz = ln.v[iz];
     if (vx == null || vy == null || vz == null) continue;
     if ((dz0 && vx === 0) || (dz1 && vy === 0) || (dz2 && vz === 0)) continue;
-    const key = vx + ',' + vy + ',' + vz;
+    let key = vx + ',' + vy + ',' + vz, vw = 0;
+    if (iw >= 0) {
+      vw = ln.v[iw];
+      if (vw == null || (dzw && vw === 0)) continue;
+      key += ',' + vw;
+    }
     let c = cells.get(key);
-    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, top: null }; cells.set(key, c); }
+    if (!c) { c = { p: vx, r: vy, a: vz, n: 0, top: null, w4: iw >= 0 ? vw : undefined }; cells.set(key, c); }
     c.n += ln.n;
     for (const o of ln.r) { if (c.top === null || cmp(o, c.top) < 0) c.top = o; }
   }
   const out = [];
   for (const c of cells.values()) {
     const top = c.top;
-    out.push(game
+    const cell = game
       ? { p: c.p, r: c.r, a: c.a, n: c.n, d: top[5], pl: top[1], t: top[2],
           m: top[3], g: top[4], pid: top[0], w: top[6] }
       : { p: c.p, r: c.r, a: c.a, n: c.n, d: top[2], pl: top[1], t: null,
-          m: top[2] + ' season', g: null, gp: top[3], pid: top[0] });
+          m: top[2] + ' season', g: null, gp: top[3], pid: top[0] };
+    if (c.w4 !== undefined) cell.w4 = c.w4;
+    out.push(cell);
   }
-  const mx = out.reduce((m, c) => Math.max(m, c.p), 0);
-  const my = out.reduce((m, c) => Math.max(m, c.r), 0);
-  const mz = out.reduce((m, c) => Math.max(m, c.a), 0);
-  return { axes: { x: { max: mx }, y: { max: my }, z: { max: mz } }, cells: out, recentCtx: ctx };
+  return finishRollup(out, ctx, wKey);
 }
