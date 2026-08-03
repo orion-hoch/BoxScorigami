@@ -1,15 +1,7 @@
-// Precompute each sport's default view: run the exact client rollup
-// (public/rollup.js) over the full game dump and save the resulting cells as
-// <base>/default.json.br. The page renders this small file instantly while the
-// big dump streams in the background (see fastDefaultRender in index.html).
-//
-// Run after regenerating dumps:  node build_defaults.mjs
 import { readFileSync, writeFileSync } from 'node:fs';
 import { brotliCompressSync, brotliDecompressSync, constants } from 'node:zlib';
 import { decodeBinary, rollupCube } from './public/rollup.js';
 
-// Must match SPORTS defaults (and first group/position) in public/index.html
-// and the bases in its early-fetch head script.
 const TARGETS = [
   ['nba',     ['pts', 'reb', 'ast']],
   ['wnba',    ['pts', 'reb', 'ast']],

@@ -1,21 +1,14 @@
-# Local data — SQLite DBs are too big for git; regenerate via the collect scripts.
-# Blanket rule so no sport's db (or a renamed/new one) can ever be committed.
 *.sqlite*
 
-# Editor/tool backups. *.sqlite* already covers db backups, but a 76 MB
-# nfl_full.sqlite.bak was committed once before that rule existed.
 *.bak
 *.orig
 *~
 
-# Chromium profile from the PFR scrape (cached cookies, no source value)
 .browser_profile/
 
-# Legacy per-sport publish folders — deploy now serves /public/ at the repo root
 nba/public/
 nfl/public/
 
-# Vendored nba_api repo — install via pip instead if you need it locally
 nba_api/
 
 __pycache__/

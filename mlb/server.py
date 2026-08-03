@@ -4,7 +4,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.append(str(HERE.parent))
-import stats as shared  # noqa: E402
+import stats as shared
 
 DB_PATH = HERE / "mlb.sqlite"
 

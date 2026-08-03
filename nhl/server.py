@@ -4,7 +4,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.append(str(HERE.parent))
-import stats as shared  # noqa: E402
+import stats as shared
 
 DB_PATH = HERE / "nhl.sqlite"
 
@@ -101,7 +101,6 @@ GROUPS = {
     "sk": {"label": "Skaters", "stats": SKATERS, "sanity": SK_SANITY,
            "table": SK_TABLE, "matchup": "matchup",
            "defaults": ("goals", "assists", "sog")},
-    # per-position slices of the skater data, MLB-style (position is per game row)
     **{key: {"label": label, "stats": SKATERS,
              "sanity": f"({SK_SANITY}) AND position = '{pos}'",
              "table": SK_TABLE, "matchup": "matchup",

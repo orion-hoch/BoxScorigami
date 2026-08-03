@@ -1,25 +1,4 @@
-"""Collect NHL player-game stats into nhl.sqlite via the official NHL API.
-
-Primary path is season-batch: the stats-REST per-game reports (skater
-summary/realtime/timeonice, goalie summary/savesByStrength) return a whole
-season in a handful of limit=-1 requests, carry MORE stats than the boxscore
-(SH/GW/OT/EN goals, missed-shot subtypes, per-strength TOI, goalie splits),
-and come with full names + position. The API caps any one response at 10,000
-rows, so a capped fetch is re-pulled in month slices. `scrape` (one boxscore
-request per game) remains as the fallback for games the reports miss, and is
-the only source of sweater numbers.
-
-Stats are stored raw, exactly as reported. The reports NULL most untracked-era
-stats themselves (1917 shots -> NULL); where the API instead reports 0 (e.g.
-boxscore hits pre-1997), the export layer's era cutoffs (CASE on season) are
-the place to NULL them, so cutoffs stay tunable without re-collecting.
-
-    python3 nhl/collect.py enumerate            # one request: every game since 1917
-    python3 nhl/collect.py season-batch         # bulk reports, ~5-40 requests/season
-    python3 nhl/collect.py scrape               # per-game boxscores for the leftovers
-    python3 nhl/collect.py backfill-names       # full names for boxscore-scraped rows
-    python3 nhl/collect.py stats
-"""
+"""Collect NHL player-game stats into nhl.sqlite via the official NHL API."""
 import argparse
 import datetime as dt
 import sqlite3
@@ -232,9 +211,7 @@ def init_db(conn):
 
 
 def upsert_sql(table, cols):
-    """INSERT that updates only its own columns on conflict, so the batch and
-    boxscore paths can run in either order without wiping each other's fields
-    (e.g. sweater is boxscore-only, missed-shot subtypes are batch-only)."""
+    """INSERT that updates only its own columns on conflict."""
     setters = ", ".join(f"{c}=excluded.{c}" for c in cols
                         if c not in ("game_id", "player_id"))
     return (f"INSERT INTO {table} ({','.join(cols)}) "
@@ -370,8 +347,7 @@ def scrape(conn, start, end, retry_failed, delay, limit=None):
 
 
 def month_windows(start_year):
-    """[('YYYY-MM-01', next), ...] covering Aug of the season's start year
-    through Jul of the next — every date an NHL season can touch."""
+    """[('YYYY-MM-01', next), ...] covering Aug through Jul of the season."""
     months = [(start_year + (m - 1) // 12, (m - 1) % 12 + 1) for m in range(8, 21)]
     days = [f"{y}-{m:02d}-01" for y, m in months]
     return list(zip(days, days[1:]))
@@ -427,7 +403,7 @@ def season_batch(conn, start, end, force, delay):
     seasons = [r[0] for r in conn.execute(
         f"SELECT DISTINCT season FROM games_to_scrape WHERE {where} ORDER BY season")]
     if not seasons:
-        print("No seasons enumerated — run `collect.py enumerate` first.")
+        print("No seasons enumerated. Run `collect.py enumerate` first.")
         return
     done = set() if force else {(r[0], r[1]) for r in
                                 conn.execute("SELECT season, game_type FROM seasons_batched")}

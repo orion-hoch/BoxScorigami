@@ -14,7 +14,7 @@ def sanity_filter(bad):
 
 def open_db(path) -> sqlite3.Connection:
     if not Path(path).exists():
-        raise SystemExit(f"no database at {path} — run collect.py first")
+        raise SystemExit(f"no database at {path}. Run collect.py to create it.")
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn

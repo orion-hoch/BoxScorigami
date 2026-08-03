@@ -1,20 +1,4 @@
-"""Emit one brotli dump per sport/mode instead of C(n,3) precomputed combo files.
-
-MLB has worked this way since it moved to mlb/collect.py's emit_dump: store each
-distinct stat line once and roll the three chosen axes up in the browser. The
-combo-file approach writes every line into all C(n-1,2) files it belongs to --
-for NBA's 15 stats that is 91 copies of each line, which is why a 255 MB
-database became ~1 GB of JSON.
-
-Line format matches MLB's exactly so the viewer's rollupCube() needs no
-per-sport branching:
-
-    {"mode": ..., "axes": [keys], "lines": [{"v": [...], "n": N, "r": [rep...]}]}
-
-Game reps are [pid, name, team, matchup, game_id, game_date, won]; season reps
-are [pid, name, season, gp]. Season lines carry "q" (games-played qualifier) so
-one dump serves both states of the Min Games toggle.
-"""
+"""Emit one brotli dump per sport/mode; the viewer rolls up the chosen axes."""
 import argparse
 import brotli
 import importlib
@@ -47,11 +31,7 @@ SEASON_AGG = "CAST(ROUND(1.0 * SUM({col}) / COUNT(*)) AS INT)"
 
 def build_season_avg(conn, stats, sanity, pid, where, table, dest,
                      agg=SEASON_AGG, po="0"):
-    """Season rollup by player-season, one column per stat key. A stat can
-    carry its own "season_agg" SQL template (e.g. a rate recomputed from
-    summed components, where neither SUM nor an average of per-game values
-    is correct) which then applies in every season mode. Playoff games roll
-    up into their own row per player-season, flagged po=1."""
+    """Season rollup by player-season, one column per stat key."""
     aggs = ", ".join((s.get("season_agg") or agg).format(col=s["col"]) + f" AS {k}"
                      for k, s in stats.items())
     conn.execute(f"DROP TABLE IF EXISTS {dest}")

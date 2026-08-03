@@ -4,7 +4,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.append(str(HERE.parent))
-import stats as shared  # noqa: E402
+import stats as shared
 
 DB_PATH = HERE / "nfl_full.sqlite"
 
@@ -117,8 +117,6 @@ ST_SANITY = shared.sanity_filter([
 MATCHUP_LOOKUP = """(SELECT p.matchup FROM player_games p
      WHERE p.game_id = t.game_id AND p.team_abbr = t.team_abbr LIMIT 1)"""
 
-# player_pos_bucket maps each player to a modern position bucket (era-aware:
-# pre-1960 LE/RE ends count as receivers, pre-2000 LS/RS are safeties).
 def _bucket(b):
     return f"player_pfr_id IN (SELECT pid FROM player_pos_bucket WHERE bucket = '{b}')"
 

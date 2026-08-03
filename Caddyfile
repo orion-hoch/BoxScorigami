@@ -1,5 +1,3 @@
-# Serve the static site on the port Railway provides ($PORT). Railway
-# terminates TLS at its edge, so Caddy just serves plain HTTP here.
 {
 	admin off
 	persist_config off
@@ -7,35 +5,24 @@
 }
 
 :{$PORT:8080} {
-	# /srv in the container; override for local dev:
-	#   SITE_ROOT=public caddy run --config Caddyfile
 	root * {$SITE_ROOT:/srv}
 	encode gzip zstd
 
-	# The dumps are pre-compressed with brotli on disk (~40% smaller than gzip).
-	# Advertising the encoding lets the browser inflate them natively while
-	# streaming, instead of the page decompressing in JS. `encode` above skips
-	# any response that already carries a Content-Encoding.
 	@jsonbr path *.json.br
 	header @jsonbr {
 		Content-Encoding br
 		Content-Type application/json
 		Cache-Control "public, max-age=86400"
 	}
-	# NBA ships the columnar binary format; same brotli transport, binary body.
 	@binbr path *.bin.br
 	header @binbr {
 		Content-Encoding br
 		Content-Type application/octet-stream
 		Cache-Control "public, max-age=86400"
 	}
-	# Vendored three.js is pinned by version on disk; cache it hard.
 	@vendor path /vendor/*
 	header @vendor Cache-Control "public, max-age=604800"
 
-	# index.html and rollup.js must move in lockstep: if a CDN serves a stale
-	# copy of either, the page crashes. no-cache = always revalidate (cheap
-	# ETag check), so Cloudflare can't serve a mixed deploy for hours.
 	@app path / /index.html /rollup.js
 	header @app Cache-Control "no-cache"
 
